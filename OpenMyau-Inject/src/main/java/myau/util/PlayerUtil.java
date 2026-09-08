@@ -181,6 +181,9 @@ public class PlayerUtil {
                             if (keepSprint.isEnabled() && keepSprint.shouldKeepSprint()) {
                                 mc.thePlayer.motionX *= 0.6 + 0.4 * (1.0 - keepSprint.slowdown.getValue().doubleValue() / 100.0);
                                 mc.thePlayer.motionZ *= 0.6 + 0.4 * (1.0 - keepSprint.slowdown.getValue().doubleValue() / 100.0);
+                                if (keepSprint.shouldDropSprintAfterHit()) {
+                                    mc.thePlayer.setSprinting(false);
+                                }
                             } else {
                                 mc.thePlayer.motionX *= 0.6;
                                 mc.thePlayer.motionZ *= 0.6;

@@ -6,6 +6,7 @@ import net.minecraft.client.renderer.OpenGlHelper;
 import org.lwjgl.opengl.GL11;
 
 public final class MsdfFontRenderer implements RavenFontRenderer {
+    private static final float SHADOW_SCALE = 0.125F;
     private final MsdfAtlas atlas;
     private final float size;
     private final float inkHeight;
@@ -14,6 +15,9 @@ public final class MsdfFontRenderer implements RavenFontRenderer {
         this.size = size;
         this.inkHeight = Math.max(1.0F, (atlas.inkTop - atlas.inkBottom) * size);
     }
+    private float shadowOffset() {
+        return Math.max(0.5F, this.size * SHADOW_SCALE);
+    }
     @Override
     public int drawString(String text, float x, float y, int color, boolean shadow) {
         if (text == null || text.isEmpty()) {
@@ -21,7 +25,8 @@ public final class MsdfFontRenderer implements RavenFontRenderer {
         }
         int width = 0;
         if (shadow) {
-            width = this.draw(text, x + 0.5F, y + 0.5F, color, true);
+            float offset = this.shadowOffset();
+            width = this.draw(text, x + offset, y + offset, color, true);
         }
         return Math.max(width, this.draw(text, x, y, color, false));
     }

@@ -41,6 +41,29 @@ public class BlockUtil {
         return block instanceof BlockJukebox;
     }
 
+    public static boolean isUseInteractable(MovingObjectPosition hit) {
+        if (hit == null || hit.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK
+                || hit.getBlockPos() == null || mc.thePlayer == null || mc.theWorld == null) {
+            return false;
+        }
+        if (mc.thePlayer.isSneaking() && mc.thePlayer.getHeldItem() != null) {
+            return false;
+        }
+        return isUseInteractable(mc.theWorld.getBlockState(hit.getBlockPos()).getBlock());
+    }
+
+    public static boolean isUseInteractable(Block block) {
+        return block instanceof BlockTrapDoor
+                || block instanceof BlockDoor
+                || block instanceof BlockContainer
+                || block instanceof BlockJukebox
+                || block instanceof BlockFenceGate
+                || block instanceof BlockEnchantmentTable
+                || block instanceof BlockAnvil
+                || block instanceof BlockBed
+                || block instanceof BlockWorkbench;
+    }
+
     public static boolean isSolid(Block block) {
         if (block instanceof BlockStairs) return false;
         if (block instanceof BlockSlab) return false;

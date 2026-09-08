@@ -16,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Fonts {
     private static final String RESOURCE_ROOT = "/myau/font/";
     private static final float HUD_FONT_SIZE = 10.0F;
-    public static final String[] MSDF_FONTS = {"SF", "SFBOLD", "ProductSansRegular"};
+    public static final String[] MSDF_FONTS = {"SF", "SFBOLD", "ProductSansRegular",
+            "GoogleSansRegular", "GoogleSansBold", "Tahoma", "TahomaBold", "Verdana"};
     public static final String[] ARRAYLIST_FONTS =
             {"Sf-Bold.ttf", "Sf-Regular.ttf", "Sf-Ui.ttf", "product_sans_regular.ttf"};
     private static final int MAX_CACHED_RENDERERS = 512;

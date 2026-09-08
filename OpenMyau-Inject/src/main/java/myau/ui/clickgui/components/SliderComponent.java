@@ -116,7 +116,7 @@ public class SliderComponent extends Component {
     }
     private void apply(double value) {
         if (this.property instanceof FloatProperty) {
-            this.property.setValue((float) value);
+            this.property.setValue(((FloatProperty) this.property).snap((float) value));
         } else {
             int rounded = (int) Math.round(value);
             this.property.setValue(this.property instanceof IntProperty

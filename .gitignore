@@ -12,11 +12,19 @@ myau-natives/build/
 CMakeCache.txt
 CMakeFiles/
 
+# Local payload URLs -- see myau-natives/urls.cmake.example
+myau-natives/urls.cmake
+
 # Build output
 dist/
+libs/
 
 # Development run directory -- holds accounts, saves and logs
 run/
+
+# Bundled third-party configs and the download site
+configs/
+dist-web/
 
 # IDE
 .idea/

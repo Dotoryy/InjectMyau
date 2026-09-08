@@ -41,7 +41,8 @@ public abstract class MixinEntityPlayer extends MixinEntityLivingBase {
     private void setSprinnt(EntityPlayer entityPlayer, boolean boolean2) {
         if (Myau.moduleManager != null) {
             KeepSprint keepSprint = (KeepSprint) Myau.moduleManager.modules.get(KeepSprint.class);
-            if (!keepSprint.isEnabled() || !keepSprint.shouldKeepSprint()) {
+            if (!keepSprint.isEnabled() || !keepSprint.shouldKeepSprint()
+                    || keepSprint.shouldDropSprintAfterHit()) {
                 entityPlayer.setSprinting(boolean2);
             }
         }

@@ -3,6 +3,7 @@ package myau.inject;
 import myau.Myau;
 import myau.event.EventManager;
 import myau.events.KnockbackEvent;
+import myau.events.MoveEvent;
 import myau.events.SafeWalkEvent;
 import myau.events.StrafeEvent;
 import myau.management.RotationState;
@@ -109,6 +110,20 @@ public final class EntityCallbacks {
             entity.moveFlying(strafe, forward, friction);
         }
     }
+    public static void moveEntity(EntityLivingBase entity, double x, double y, double z) {
+        try {
+            if (!(entity instanceof EntityPlayerSP)) {
+                entity.moveEntity(x, y, z);
+                return;
+            }
+            MoveEvent event = new MoveEvent(x, y, z);
+            EventManager.call(event);
+            entity.moveEntity(event.getPosX(), event.getPosY(), event.getPosZ());
+        } catch (Throwable swallowed) {
+            Log.swallowed(swallowed);
+            entity.moveEntity(x, y, z);
+        }
+    }
     public static float depthStrider(float value) {
         Object self = headingEntity;
         try {
@@ -152,7 +167,8 @@ public final class EntityCallbacks {
             if (Myau.moduleManager != null) {
                 KeepSprint keepSprint =
                         (KeepSprint) Myau.moduleManager.modules.get(KeepSprint.class);
-                if (keepSprint.isEnabled() && keepSprint.shouldKeepSprint()) {
+                if (keepSprint.isEnabled() && keepSprint.shouldKeepSprint()
+                        && !keepSprint.shouldDropSprintAfterHit()) {
                     return;
                 }
             }

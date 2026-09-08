@@ -26,6 +26,10 @@ public class AimAssist extends Module {
     public final FloatProperty hSpeed = new FloatProperty("horizontal-speed", 3.0F, 0.0F, 10.0F);
     public final FloatProperty vSpeed = new FloatProperty("vertical-speed", 0.0F, 0.0F, 10.0F);
     public final PercentProperty smoothing = new PercentProperty("smoothing", 50);
+    public final PercentProperty multiPointHorizontal =
+            new PercentProperty("multipoint-horizontal", 0);
+    public final PercentProperty multiPointVertical =
+            new PercentProperty("multipoint-vertical", 0);
     public final FloatProperty range = new FloatProperty("range", 4.5F, 3.0F, 8.0F);
     public final IntProperty fov = new IntProperty("fov", 90, 30, 360);
     public final BooleanProperty weaponOnly = new BooleanProperty("weapons-only", true);
@@ -99,7 +103,9 @@ public class AimAssist extends Module {
                                         mc.thePlayer.rotationYaw,
                                         mc.thePlayer.rotationPitch,
                                         180.0F,
-                                        (float) this.smoothing.getValue() / 100.0F
+                                        (float) this.smoothing.getValue() / 100.0F,
+                                        (float) this.multiPointHorizontal.getValue(),
+                                        (float) this.multiPointVertical.getValue()
                                 );
                                 float yaw = Math.min(Math.abs(this.hSpeed.getValue()), 10.0F);
                                 float pitch = Math.min(Math.abs(this.vSpeed.getValue()), 10.0F);

@@ -29,6 +29,26 @@ if(NOT DEFINED CLIENT_JAR)
 endif()
 message(STATUS "client jar: ${CLIENT_JAR}")
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/urls.cmake" OPTIONAL)
+
+if(NOT DEFINED PAYLOAD_URL)
+    set(PAYLOAD_URL "https://example.invalid/myau_native")
+endif()
+if(NOT DEFINED BETA_URL)
+    set(BETA_URL "https://example.invalid/myau_native_beta")
+endif()
+if(NOT DEFINED CHANGELOG_URL)
+    set(CHANGELOG_URL "https://pastebin.com/raw/y2TzJxdF")
+endif()
+if(NOT DEFINED BETA_CHANGELOG_URL)
+    set(BETA_CHANGELOG_URL "https://pastebin.com/raw/6uKGaBqM")
+endif()
+message(STATUS "payload url: ${PAYLOAD_URL}")
+message(STATUS "beta url: ${BETA_URL}")
+message(STATUS "changelog url: ${CHANGELOG_URL}")
+message(STATUS "beta changelog url: ${BETA_CHANGELOG_URL}")
+configure_file(loader/payload_url.h.in "${CMAKE_CURRENT_BINARY_DIR}/payload_url.h" @ONLY)
+
 set(PAYLOAD_DIR "${CMAKE_BINARY_DIR}/payload")
 
 add_custom_command(
@@ -47,7 +67,12 @@ add_custom_command(
         DEPENDS "${CLIENT_JAR}"
         COMMENT "staging the client jar for embedding")
 
-set(PAYLOAD_FILES "${PAYLOAD_DIR}/myau_native.dll" "${PAYLOAD_DIR}/client.jar")
+set(NATIVE_RC "${CMAKE_CURRENT_BINARY_DIR}/myau_native_resources.rc")
+configure_file(dll/native_resources.rc.in "${NATIVE_RC}" @ONLY)
+set_property(SOURCE "${NATIVE_RC}" APPEND PROPERTY OBJECT_DEPENDS "${CLIENT_JAR}")
+target_sources(myau_native PRIVATE "${NATIVE_RC}")
+
+set(PAYLOAD_FILES "${PAYLOAD_DIR}/myau_native.dll")
 
 set(LOGO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/loader/logo.png")
 if(EXISTS "${LOGO_SOURCE}")
@@ -65,6 +90,25 @@ else()
     set(LOGO_RESOURCE "// no logo.png at build time")
 endif()
 
+if(NOT DEFINED FONT_SOURCE)
+    set(FONT_SOURCE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../OpenMyau-Inject/src/main/resources/myau/font/product_sans_regular.ttf")
+endif()
+if(EXISTS "${FONT_SOURCE}")
+    list(APPEND PAYLOAD_FILES "${FONT_SOURCE}")
+    set(FONT_RESOURCE "IDR_FONT       RCDATA \"${FONT_SOURCE}\"")
+else()
+    message(STATUS "${FONT_SOURCE} is absent -- the window will fall back to Segoe UI")
+    set(FONT_RESOURCE "// no font at build time")
+endif()
+
+set(MANIFEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/loader/app.manifest")
+if(EXISTS "${MANIFEST_SOURCE}")
+    set(MANIFEST_RESOURCE "1 24 \"${MANIFEST_SOURCE}\"")
+else()
+    set(MANIFEST_RESOURCE "// no manifest at build time")
+endif()
+
 set(ICON_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/loader/logo.ico")
 if(EXISTS "${ICON_SOURCE}")
     set(ICON_RESOURCE "IDI_APP        ICON   \"${ICON_SOURCE}\"")
@@ -77,16 +121,21 @@ add_custom_target(myau_payload DEPENDS ${PAYLOAD_FILES})
 
 set(GENERATED_RC "${CMAKE_CURRENT_BINARY_DIR}/myau_resources.rc")
 configure_file(loader/resources.rc.in "${GENERATED_RC}" @ONLY)
-set_property(SOURCE "${GENERATED_RC}" APPEND PROPERTY OBJECT_DEPENDS "${PAYLOAD_FILES};${ICON_SOURCE}")
+set_property(SOURCE "${GENERATED_RC}" APPEND PROPERTY
+        OBJECT_DEPENDS "${PAYLOAD_FILES};${ICON_SOURCE};${MANIFEST_SOURCE}")
 
 add_executable(myau_loader WIN32
+        loader/download.cpp
         loader/gui.cpp
         loader/inject.cpp
         loader/target.cpp
         "${GENERATED_RC}")
 add_dependencies(myau_loader myau_payload)
-target_include_directories(myau_loader PRIVATE loader)
-target_link_libraries(myau_loader PRIVATE psapi gdiplus ole32 dwmapi)
+target_include_directories(myau_loader PRIVATE loader "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(myau_loader PRIVATE psapi gdiplus ole32 dwmapi winhttp shell32)
+if(MSVC)
+    target_link_options(myau_loader PRIVATE /MANIFEST:NO)
+endif()
 
 if(MSVC)
     target_compile_options(myau_native PRIVATE /W3 /EHsc)

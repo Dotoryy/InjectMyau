@@ -16,6 +16,8 @@ jvmtiEnv *g_jvmti = nullptr;
 jclass g_bridge = nullptr;
 jmethodID g_transform = nullptr;
 std::wstring g_dllDir;
+HMODULE g_module = nullptr;
+constexpr int IDR_EMBEDDED_JAR = 101;
 std::wstring g_dllPath;
 std::wstring g_logPath;
 
@@ -172,6 +174,49 @@ jobject findGameClassLoader(JNIEnv *env) {
     }
     return chosen;
 }
+std::wstring extractEmbeddedJar() {
+    HRSRC found = FindResourceW(g_module, MAKEINTRESOURCEW(IDR_EMBEDDED_JAR), MAKEINTRESOURCEW(10));
+    if (!found) {
+        return L"";
+    }
+    HGLOBAL loaded = LoadResource(g_module, found);
+    if (!loaded) {
+        return L"";
+    }
+    const void *bytes = LockResource(loaded);
+    DWORD size = SizeofResource(g_module, found);
+    if (!bytes || size == 0) {
+        return L"";
+    }
+    wchar_t tempDir[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, tempDir)) {
+        return L"";
+    }
+    wchar_t name[64];
+    wsprintfW(name, L"myau_client_%lu.jar", GetCurrentProcessId());
+    std::wstring path = std::wstring(tempDir) + name;
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            logf("reusing the jar already unpacked for this process");
+            return path;
+        }
+        logf("could not open %S to unpack the jar (error %lu)", path.c_str(), GetLastError());
+        return L"";
+    }
+    DWORD written = 0;
+    BOOL ok = WriteFile(handle, bytes, size, &written, nullptr);
+    CloseHandle(handle);
+    if (!ok || written != size) {
+        logf("short write unpacking the jar (error %lu)", GetLastError());
+        DeleteFileW(path.c_str());
+        return L"";
+    }
+    logf("unpacked the embedded jar: %lu bytes", (unsigned long)size);
+    return path;
+}
+
 std::wstring findClientJar() {
     std::wstring sidecar = g_dllPath + L".txt";
     HANDLE handle = CreateFileW(sidecar.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
@@ -190,6 +235,10 @@ std::wstring findClientJar() {
             }
             logf("the sidecar names a jar that is not there");
         }
+    }
+    std::wstring embedded = extractEmbeddedJar();
+    if (!embedded.empty()) {
+        return embedded;
     }
     std::wstring pattern = g_dllDir + L"\\*.jar";
     WIN32_FIND_DATAW data;
@@ -505,6 +554,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         return TRUE;
     }
     DisableThreadLibraryCalls(module);
+    g_module = module;
     wchar_t path[MAX_PATH];
     if (GetModuleFileNameW(module, path, MAX_PATH)) {
         g_dllPath = path;

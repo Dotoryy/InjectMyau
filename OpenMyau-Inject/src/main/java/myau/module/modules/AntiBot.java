@@ -7,6 +7,7 @@ import myau.bot.checks.MojangProfileCheck;
 import myau.bot.checks.SimpleChecks;
 import myau.bot.checks.TabSnapshotCheck;
 import myau.event.EventTarget;
+import myau.inject.Log;
 import myau.event.types.EventType;
 import myau.events.LoadWorldEvent;
 import myau.events.TickEvent;
@@ -14,9 +15,12 @@ import myau.module.Module;
 import myau.property.properties.BooleanProperty;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class AntiBot extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -33,6 +37,8 @@ public class AntiBot extends Module {
     public final BooleanProperty middleClick = new BooleanProperty("middle-click", false);
     public final BooleanProperty tabSnapshot = new BooleanProperty("tab-snapshot", false);
     public final BooleanProperty mojangProfile = new BooleanProperty("mojang-profile", false);
+    public final BooleanProperty debug = new BooleanProperty("debug", false);
+    private final Map<Integer, String> debugReported = new HashMap<Integer, String>();
 
     private static final class Slot {
         final BooleanProperty setting;
@@ -85,12 +91,49 @@ public class AntiBot extends Module {
                 try {
                     slot.check.update();
                 } catch (Throwable failed) {
-
+                    Log.swallowed(failed);
                 }
             } else if (slot.wasOn) {
                 slot.check.onDisabled();
             }
             slot.wasOn = on;
+        }
+        if (this.debug.getValue()) {
+            this.reportFlags();
+        } else if (!this.debugReported.isEmpty()) {
+            this.debugReported.clear();
+        }
+    }
+
+    private void reportFlags() {
+        for (Object raw : mc.theWorld.playerEntities) {
+            if (!(raw instanceof EntityPlayer) || raw == mc.thePlayer) {
+                continue;
+            }
+            EntityPlayer player = (EntityPlayer) raw;
+            StringBuilder flags = new StringBuilder();
+            for (Slot slot : this.slots) {
+                if (!slot.setting.getValue()) {
+                    continue;
+                }
+                if (Myau.botManager.isBot(slot.check, player)) {
+                    if (flags.length() > 0) {
+                        flags.append(',');
+                    }
+                    flags.append(slot.check.getName());
+                }
+            }
+            String verdict = flags.length() == 0 ? "none" : flags.toString();
+            Integer id = Integer.valueOf(player.getEntityId());
+            if (!verdict.equals(this.debugReported.get(id))) {
+                this.debugReported.put(id, verdict);
+                Log.line(String.format("[AB] %s id=%d uuid=%s v=%d tab=%b -> %s",
+                        player.getName(), player.getEntityId(),
+                        player.getUniqueID(), player.getUniqueID().version(),
+                        mc.getNetHandler() != null
+                                && mc.getNetHandler().getPlayerInfo(player.getUniqueID()) != null,
+                        verdict));
+            }
         }
     }
 

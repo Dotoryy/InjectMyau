@@ -20,6 +20,23 @@ public final class RenderCallbacks {
     private RenderCallbacks() {
     }
 
+    public static int itemInUseCountForRender(net.minecraft.entity.player.EntityPlayer player) {
+        try {
+            int actual = player.getItemInUseCount();
+            if (actual > 0 || !myau.util.ReflectionUtils.isItemInUse()) {
+                return actual;
+            }
+            net.minecraft.item.ItemStack held = player.getHeldItem();
+            if (held != null
+                    && held.getItemUseAction() == net.minecraft.item.EnumAction.BLOCK) {
+                return 1;
+            }
+            return actual;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
     public static String text(String text) {
         try {
             if (Myau.moduleManager == null) {

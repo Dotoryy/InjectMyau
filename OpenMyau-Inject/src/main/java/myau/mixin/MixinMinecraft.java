@@ -57,6 +57,7 @@ public abstract class MixinMinecraft {
             at = {@At("HEAD")}
     )
     private void runTick(CallbackInfo callbackInfo) {
+        myau.inject.Bootstrap.tick();
         if (this.theWorld != null && this.thePlayer != null) {
             EventManager.call(new TickEvent(EventType.PRE));
         }
@@ -89,6 +90,19 @@ public abstract class MixinMinecraft {
     }
 
     @Inject(
+            method = {"runTick"},
+            at = {@At(
+                    value = "FIELD",
+                    target = "Lnet/minecraft/client/settings/GameSettings;chatVisibility:"
+                            + "Lnet/minecraft/entity/player/EntityPlayer$EnumChatVisibility;",
+                    shift = At.Shift.BEFORE
+            )}
+    )
+    private void prePlayerInteract(CallbackInfo callbackInfo) {
+        EventManager.call(new PrePlayerInteractEvent());
+    }
+
+    @Inject(
             method = {"clickMouse"},
             at = {@At("HEAD")},
             cancellable = true
@@ -96,6 +110,12 @@ public abstract class MixinMinecraft {
     private void clickMouse(CallbackInfo callbackInfo) {
         if (Myau.moduleManager != null && Myau.moduleManager.modules.get(NoHitDelay.class).isEnabled()) {
             this.leftClickCounter = 0;
+        }
+        PreAttackEvent preAttack = new PreAttackEvent(Minecraft.getMinecraft().objectMouseOver);
+        EventManager.call(preAttack);
+        if (preAttack.isCancelled()) {
+            callbackInfo.cancel();
+            return;
         }
         LeftClickMouseEvent event = new LeftClickMouseEvent();
         EventManager.call(event);
@@ -139,6 +159,13 @@ public abstract class MixinMinecraft {
             )
     )
     private void setKeyBindState(int integer, boolean boolean2) {
+        if (integer < 0) {
+            MouseButtonEvent mouseEvent = new MouseButtonEvent(integer + 100, boolean2);
+            EventManager.call(mouseEvent);
+            if (mouseEvent.isCancelled()) {
+                return;
+            }
+        }
         KeyBinding.setKeyBindState(integer, boolean2);
         if (boolean2) {
             EventManager.call(new KeyEvent(integer, this.currentScreen != null));

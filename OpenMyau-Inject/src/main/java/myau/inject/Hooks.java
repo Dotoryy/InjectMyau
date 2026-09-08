@@ -6,6 +6,9 @@ public final class Hooks {
     private static final String V = "()V";
     private static final String MINECRAFT = "net.minecraft.client.Minecraft";
     private static final String KEY_BINDING = "net.minecraft.client.settings.KeyBinding";
+    private static final String ITEM_RENDERER = "net.minecraft.client.renderer.ItemRenderer";
+    private static final String MINECRAFT_GAME_SETTINGS =
+            "net.minecraft.client.settings.GameSettings";
     private static final String GUI_INGAME = "net.minecraft.client.gui.GuiIngame";
     private static final String GUI_SCREEN = "net.minecraft.client.gui.GuiScreen";
     private static final String GUI_INGAME_FORGE = "net.minecraftforge.client.GuiIngameForge";
@@ -45,11 +48,30 @@ public final class Hooks {
 
         HookRegistry.hook(MINECRAFT, "runTick", V).at(Position.HEAD).calls("tickPre").add();
         HookRegistry.hook(MINECRAFT, "runTick", V).at(Position.RETURN).calls("tickPost").add();
+        HookRegistry.hook(ITEM_RENDERER, "renderItemInFirstPerson", "(F)V")
+                .at(Position.REPLACE_INVOKE)
+                .invoking(ABSTRACT_PLAYER, "getItemInUseCount", "()I").membersOf(PLAYER)
+                .calls("itemInUseCountForRender",
+                        "(Lnet/minecraft/entity/player/EntityPlayer;)I")
+                .in(RenderCallbacks.OWNER).optional().add();
+        HookRegistry.hook(MINECRAFT, "runTick", V)
+                .at(Position.BEFORE_FIELD)
+                .field(MINECRAFT_GAME_SETTINGS, "chatVisibility",
+                        "Lnet/minecraft/entity/player/EntityPlayer$EnumChatVisibility;")
+                .calls("prePlayerInteract").optional().add();
+        HookRegistry.hook(MINECRAFT, "runInputTick", V)
+                .at(Position.BEFORE_FIELD)
+                .field(MINECRAFT_GAME_SETTINGS, "chatVisibility",
+                        "Lnet/minecraft/entity/player/EntityPlayer$EnumChatVisibility;")
+                .calls("prePlayerInteract").optional().add();
+        HookRegistry.hook(MINECRAFT, "rightClickMouse", V)
+                .at(Position.HEAD).calls("rightClickMouse", "()Z").cancellable().add();
         HookRegistry.hook(MINECRAFT, "clickMouse", V)
                 .at(Position.HEAD).calls("clickMouse", "()Z").cancellable().add();
 
         HookRegistry.hook(KEY_BINDING, "setKeyBindState", "(IZ)V")
-                .at(Position.HEAD).calls("keyBindStatePre", "(IZ)V").args("0,1").add();
+                .at(Position.HEAD).calls("keyBindStatePre", "(IZ)Z").args("0,1")
+                .cancellable().add();
         HookRegistry.hook(KEY_BINDING, "setKeyBindState", "(IZ)V")
                 .at(Position.RETURN).calls("keyBindStatePost").add();
 
@@ -244,6 +266,11 @@ public final class Hooks {
                 .calls("moveFlying", "(Lnet/minecraft/entity/EntityLivingBase;FFF)V").add();
 
         HookRegistry.hook(LIVING, "moveEntityWithHeading", "(FF)V").in(entity)
+                .at(Position.REPLACE_INVOKE)
+                .invoking(LIVING, "moveEntity", "(DDD)V").membersOf(ENTITY)
+                .calls("moveEntity", "(Lnet/minecraft/entity/EntityLivingBase;DDD)V").add();
+
+        HookRegistry.hook(LIVING, "moveEntityWithHeading", "(FF)V").in(entity)
                 .at(Position.MODIFY_STORE).storing("F").ordinal(2)
                 .calls("depthStrider", "(F)F").add();
         HookRegistry.hook(PLAYER, "attackTargetEntityWithCurrentItem",
@@ -354,14 +381,15 @@ public final class Hooks {
                         "(Lnet/minecraft/entity/player/EntityPlayer;"
                                 + "Lnet/minecraft/entity/Entity;)V").in(player)
                 .at(Position.HEAD).args("1")
-                .calls("attackEntityPre", "(Ljava/lang/Object;)V").add();
-        HookRegistry.hook(CONTROLLER, "attackEntity",
-                        "(Lnet/minecraft/entity/player/EntityPlayer;"
-                                + "Lnet/minecraft/entity/Entity;)V").in(player)
-                .at(Position.BEFORE_INVOKE)
-                .invoking(CONTROLLER, "syncCurrentPlayItem", "()V")
-                .calls("attackEntity").add();
+                .calls("attackEntity", "(Ljava/lang/Object;)Z").cancellable().add();
 
+        HookRegistry.hook(CONTROLLER, "sendUseItem",
+                        "(Lnet/minecraft/entity/player/EntityPlayer;"
+                                + "Lnet/minecraft/world/World;"
+                                + "Lnet/minecraft/item/ItemStack;)Z")
+                .at(Position.HEAD).args("2")
+                .calls("sendUseItem", "(Ljava/lang/Object;)Ljava/lang/Boolean;")
+                .cancellable().add();
         HookRegistry.hook(CONTROLLER, "windowClick",
                         "(IIIILnet/minecraft/entity/player/EntityPlayer;)"
                                 + "Lnet/minecraft/item/ItemStack;").in(player)

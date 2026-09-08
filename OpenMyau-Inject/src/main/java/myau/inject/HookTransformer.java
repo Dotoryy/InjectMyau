@@ -144,6 +144,12 @@ public final class HookTransformer implements ClassFileTransformer {
                     log.offer("no method " + mcp + "." + hook.method);
                     continue;
                 }
+                if (!cancellableHere(hook)) {
+                    log.offer("refusing cancellable " + mcp + "." + hook.method + " @"
+                            + hook.position + " -- a cancel needs an empty stack, and there is"
+                            + " none there");
+                    continue;
+                }
                 int placed = insert(target, hook);
                 if (placed == 0) {
                     MethodNode delegate = delegateOf(node, target);
@@ -542,6 +548,12 @@ public final class HookTransformer implements ClassFileTransformer {
             names.add(notch.replace('.', '/'));
         }
         return names;
+    }
+
+    private static boolean cancellableHere(HookRegistry.Hook hook) {
+        return !hook.cancellable
+                || hook.position == HookRegistry.Position.HEAD
+                || hook.position == HookRegistry.Position.RETURN;
     }
 
     private InsnList callback(MethodNode target, HookRegistry.Hook hook) {

@@ -10,6 +10,7 @@ import myau.access.AccessorPlayerControllerMP;
 import myau.access.AccessorRenderManager;
 import myau.module.Module;
 import myau.util.ItemUtil;
+import myau.util.PacketUtil;
 import myau.util.RenderUtil;
 import myau.util.RotationUtil;
 import myau.util.TeamUtil;
@@ -26,6 +27,8 @@ import net.minecraft.network.play.client.C07PacketPlayerDigging;
 import net.minecraft.network.play.client.C07PacketPlayerDigging.Action;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.EnumFacing;
 import net.minecraft.util.Vec3;
 
 import java.awt.*;
@@ -39,12 +42,14 @@ public class LagRange extends Module {
     private boolean hasTarget = false;
     private Vec3 lastPosition = null;
     private Vec3 currentPosition = null;
+    private boolean lagBlocked = false;
     public final IntProperty delay = new IntProperty("delay", 150, 0, 1000);
     public final FloatProperty range = new FloatProperty("range", 10.0F, 3.0F, 100.0F);
     public final BooleanProperty weaponsOnly = new BooleanProperty("weapons-only", true);
     public final BooleanProperty allowTools = new BooleanProperty("allow-tools", false, this.weaponsOnly::getValue);
     public final BooleanProperty botCheck = new BooleanProperty("bot-check", true);
     public final BooleanProperty teams = new BooleanProperty("teams", true);
+    public final BooleanProperty blockSword = new BooleanProperty("lag-block-sword", false);
     public final ModeProperty showPosition = new ModeProperty("show-position", 0, new String[]{"NONE", "DEFAULT", "HUD"});
 
     private boolean isValidTarget(EntityPlayer entityPlayer) {
@@ -78,6 +83,24 @@ public class LagRange extends Module {
 
     public LagRange() {
         super("Lag Range", false);
+    }
+
+    private void engageLag(int lagTicks) {
+        if (this.lagBlocked
+                || !this.blockSword.getValue()
+                || mc.thePlayer == null
+                || mc.getNetHandler() == null
+                || mc.thePlayer.isUsingItem()
+                || !ItemUtil.isHoldingSword()) {
+            Myau.lagManager.setDelay(lagTicks);
+            return;
+        }
+        AccessorPlayerControllerMP.callSyncCurrentPlayItem(mc.playerController);
+        PacketUtil.sendPacket(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+        Myau.lagManager.setDelay(lagTicks);
+        PacketUtil.sendPacket(new C07PacketPlayerDigging(
+                Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+        this.lagBlocked = true;
     }
 
     @EventTarget(Priority.LOW)
@@ -125,7 +148,7 @@ public class LagRange extends Module {
                                                 this.tickIndex++;
                                             }
                                         }
-                                        Myau.lagManager.setDelay(this.tickIndex);
+                                        this.engageLag(this.tickIndex);
                                         this.hasTarget = true;
                                         return;
                                     }
@@ -135,6 +158,7 @@ public class LagRange extends Module {
                     } else {
                         this.tickIndex = -1;
                     }
+                    this.lagBlocked = false;
                     break;
                 case POST:
                     Vec3 savedPosition = Myau.lagManager.getLastPosition();
@@ -154,6 +178,7 @@ public class LagRange extends Module {
             if (this.shouldResetOnPacket(event.getPacket())) {
                 Myau.lagManager.setDelay(0);
                 this.tickIndex = -1;
+                this.lagBlocked = false;
             }
         }
     }
@@ -201,6 +226,7 @@ public class LagRange extends Module {
 
     @Override
     public void onDisabled() {
+        this.lagBlocked = false;
         Myau.lagManager.setDelay(0);
         this.tickIndex = -1;
         this.delayCounter = 0L;

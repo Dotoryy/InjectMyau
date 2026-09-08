@@ -13,16 +13,26 @@ import myau.property.properties.IntProperty;
 import myau.property.properties.ModeProperty;
 import myau.property.properties.PercentProperty;
 import myau.util.ChatUtil;
+import myau.util.KeyBindUtil;
 import myau.util.MoveUtil;
+import myau.util.RotationUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.network.play.server.S19PacketEntityStatus;
 import net.minecraft.network.play.server.S27PacketExplosion;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.Potion;
+import net.minecraft.util.MathHelper;
+import net.minecraft.util.MovingObjectPosition;
 
 public class Velocity extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
+    private static final int MODE_JUMP = 1;
+    private static final int MODE_WATCHDOG = 5;
+    private static final long MW_GROUND_TIMEOUT_MS = 1000L;
+    private static final double FALL_IGNORE_DISTANCE = 3.0;
+    private static final float JUMP_FOV = 330.0F;
 
     private int chanceCounter = 0;
     private int delayChanceCounter = 0;
@@ -33,16 +43,62 @@ public class Velocity extends Module {
     private boolean delayActive = false;
 
     private boolean shouldJump = false;
+    private boolean setJump = false;
+    private boolean ignoreNext = false;
+    private int lastHurtTime = 0;
+    private double lastFallDistance = 0.0;
     private int jumpCooldown = 0;
 
-    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"VANILLA", "JUMP", "DELAY", "REVERSE", "LEGIT_TEST"});
+    private int mwCount = 0;
+    private int mwAttackCount = 0;
+    private int mwStuckTicks = 0;
+    private boolean mwStrict = false;
+    private boolean mwDelaying = false;
+    private boolean mwServerSprint = false;
+    private int mwLastAttackTick = -1;
+    private long mwWorldChangeTime = 0L;
+    private long mwDelayStart = 0L;
+
+    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"VANILLA", "JUMP", "DELAY", "REVERSE", "LEGIT_TEST",
+            "WATCHDOG"});
     public final IntProperty delayTicks = new IntProperty("delay-ticks", 3, 1, 20, () -> this.mode.getValue() == 2);
+    public final IntProperty mwDelayTicks = new IntProperty("mw-delay-ticks", 1, 0, 100,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final IntProperty mwWorldTimeout = new IntProperty("mw-world-timeout", 5000, 0, 10000,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwCancelExplosion = new BooleanProperty("mw-cancel-explosion", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwIgnoreExplosion = new BooleanProperty("mw-ignore-explosion", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwJumpReset = new BooleanProperty("mw-jump-reset", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwAttackReduce = new BooleanProperty("mw-attack-reduce", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwDisableOnFlag = new BooleanProperty("mw-disable-on-flag", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwAirOnly = new BooleanProperty("mw-air-only", true,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+    public final BooleanProperty mwUntilGround = new BooleanProperty("mw-until-ground", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
     public final PercentProperty delayChance = new PercentProperty("delay-chance", 100, () -> this.mode.getValue() == 2);
-    public final PercentProperty chance = new PercentProperty("chance", 100);
-    public final PercentProperty horizontal = new PercentProperty("horizontal", 0);
-    public final PercentProperty vertical = new PercentProperty("vertical", 100);
-    public final PercentProperty explosionHorizontal = new PercentProperty("explosions-horizontal", 100);
-    public final PercentProperty explosionVertical = new PercentProperty("explosions-vertical", 100);
+    public final PercentProperty chance =
+            new PercentProperty("chance", 100, () -> this.mode.getValue() != MODE_JUMP);
+    public final PercentProperty horizontal =
+            new PercentProperty("horizontal", 0, () -> this.mode.getValue() != MODE_JUMP);
+    public final PercentProperty vertical =
+            new PercentProperty("vertical", 100, () -> this.mode.getValue() != MODE_JUMP);
+    public final PercentProperty explosionHorizontal =
+            new PercentProperty("explosions-horizontal", 100, () -> this.mode.getValue() != MODE_JUMP);
+    public final PercentProperty explosionVertical =
+            new PercentProperty("explosions-vertical", 100, () -> this.mode.getValue() != MODE_JUMP);
+    public final PercentProperty jumpChance =
+            new PercentProperty("jump-chance", 80, this::jumpResetActive);
+    public final BooleanProperty requireMouseDown = new BooleanProperty("require-mouse-down", false,
+            this::jumpResetActive);
+    public final BooleanProperty requireMovingForward =
+            new BooleanProperty("require-moving-forward", true, this::jumpResetActive);
+    public final BooleanProperty requireAim = new BooleanProperty("require-aim", true,
+            this::jumpResetActive);
     public final BooleanProperty fakeCheck = new BooleanProperty("fake-check", true);
     public final BooleanProperty debugLog = new BooleanProperty("debug-log", false);
 
@@ -59,9 +115,257 @@ public class Velocity extends Module {
         super("Velocity", false);
     }
 
+
+    public boolean isAttackReduceActive() {
+        return this.isEnabled() && this.mode.getValue() == MODE_WATCHDOG
+                && this.mwAttackReduce.getValue() && this.mwAttackCount > 0;
+    }
+
+    private boolean mwInactive() {
+        return !this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG
+                || mc.thePlayer == null || mc.theWorld == null
+                || System.currentTimeMillis() - this.mwWorldChangeTime
+                < (long) this.mwWorldTimeout.getValue();
+    }
+
+    private boolean jumpResetActive() {
+        return this.mode.getValue() == MODE_JUMP
+                || this.mode.getValue() == MODE_WATCHDOG && this.mwJumpReset.getValue();
+    }
+
+    private boolean mwOwnsDelay() {
+        return Myau.delayManager.getDelayModule() == DelayModules.VELOCITY;
+    }
+
+    private void mwRelease() {
+        if (this.mwOwnsDelay()) {
+            Myau.delayManager.setDelayState(false, DelayModules.VELOCITY);
+        }
+        this.mwDelaying = false;
+    }
+
+    private void mwReset() {
+        this.mwRelease();
+        this.mwCount = 0;
+        this.mwAttackCount = 0;
+        this.mwStuckTicks = 0;
+        this.mwStrict = false;
+        this.mwDelaying = false;
+    }
+
+    @EventTarget
+    public void onLoadWorldMw(LoadWorldEvent event) {
+        this.mwWorldChangeTime = System.currentTimeMillis();
+        this.mwRelease();
+        this.mwCount = 0;
+        this.mwAttackCount = 0;
+        this.mwStuckTicks = 0;
+        this.mwStrict = false;
+        this.mwDelaying = false;
+    }
+
+    @EventTarget
+    public void onMoveInputMw(MoveInputEvent event) {
+        if (this.mwInactive() || mc.thePlayer.movementInput == null) {
+            return;
+        }
+        if (this.mwStrict) {
+            mc.thePlayer.movementInput.moveForward = 1.0F;
+            mc.thePlayer.movementInput.moveStrafe = 0.0F;
+        }
+    }
+
+
+    @EventTarget
+    public void onUpdateMw(UpdateEvent event) {
+        if (this.mode.getValue() != MODE_WATCHDOG) {
+            return;
+        }
+        if (event.getType() == EventType.POST) {
+            if (this.mwInactive()) {
+                if (this.mwOwnsDelay()) {
+                    this.mwRelease();
+                }
+                return;
+            }
+            this.mwAdvanceDelay();
+            return;
+        }
+        if (event.getType() != EventType.PRE) {
+            return;
+        }
+        if (this.mwInactive()) {
+            if (this.mwOwnsDelay()) {
+                this.mwRelease();
+            }
+            return;
+        }
+        if (this.mwStuckTicks > 0) {
+            this.mwStuckTicks--;
+        }
+        if (this.mwAttackCount > 0) {
+            if (this.mwAttackReduce.getValue()
+                    && this.mwLastAttackTick != mc.thePlayer.ticksExisted
+                    && this.mwServerSprint) {
+                this.mwForceAttack();
+            }
+            this.mwAttackCount--;
+        } else if (this.mwStrict) {
+            this.mwStrict = false;
+        }
+    }
+
+    private void mwAdvanceDelay() {
+        if (!this.mwDelaying) {
+            if (this.mwOwnsDelay()) {
+                this.mwRelease();
+            }
+            return;
+        }
+        this.mwCount++;
+        if (this.mwUntilGround.getValue()) {
+            boolean settled = mc.thePlayer.onGround || mc.thePlayer.isOnLadder()
+                    || this.isInLiquidOrWeb()
+                    || System.currentTimeMillis() - this.mwDelayStart >= MW_GROUND_TIMEOUT_MS;
+            if (settled) {
+                this.mwCount = 0;
+                this.mwRelease();
+            }
+            return;
+        }
+        if (this.mwCount >= this.mwDelayTicks.getValue()) {
+            this.mwCount = 0;
+            this.mwRelease();
+        }
+    }
+
+    private void mwForceAttack() {
+        KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
+        if (killAura == null || !killAura.isEnabled()) {
+            return;
+        }
+        net.minecraft.entity.EntityLivingBase target = killAura.getTarget();
+        if (target == null || target.isDead || target == mc.thePlayer) {
+            return;
+        }
+        net.minecraft.util.AxisAlignedBB box = target.getEntityBoundingBox();
+        double range = killAura.attackRange.getValue();
+        if (RotationUtil.distanceToBox(box) > range) {
+            return;
+        }
+        if (RotationUtil.rayTrace(box, mc.thePlayer.rotationYaw, mc.thePlayer.rotationPitch,
+                range) == null) {
+            return;
+        }
+        this.mwLastAttackTick = mc.thePlayer.ticksExisted;
+        mc.thePlayer.swingItem();
+        myau.access.AccessorPlayerControllerMP.callSyncCurrentPlayItem(mc.playerController);
+        myau.util.PacketUtil.sendPacket(new net.minecraft.network.play.client.C02PacketUseEntity(
+                target, net.minecraft.network.play.client.C02PacketUseEntity.Action.ATTACK));
+        if (mc.playerController.getCurrentGameType()
+                != net.minecraft.world.WorldSettings.GameType.SPECTATOR) {
+            myau.util.PlayerUtil.attackEntity(target);
+        }
+    }
+
+
+    private boolean mwBeginDelay(PacketEvent event, net.minecraft.network.Packet<?> packet) {
+        if (this.mwDelayTicks.getValue() == 0) {
+            return false;
+        }
+        if (this.mwStuckTicks > 0) {
+            return false;
+        }
+        if (this.mwAirOnly.getValue() && mc.thePlayer.onGround) {
+            return false;
+        }
+        if (Myau.delayManager.getDelayModule() != DelayModules.NONE && !this.mwOwnsDelay()) {
+            return false;
+        }
+        this.mwCount = 0;
+        this.mwDelayStart = System.currentTimeMillis();
+        this.mwDelaying = true;
+        Myau.delayManager.setDelayState(true, DelayModules.VELOCITY);
+        Myau.delayManager.delayedPacket.offer(
+                (net.minecraft.network.Packet<net.minecraft.network.play.INetHandlerPlayClient>) packet);
+        event.setCancelled(true);
+        return true;
+    }
+
+    private boolean mwHandlePacket(PacketEvent event) {
+        if (!this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG
+                || mc.thePlayer == null) {
+            return false;
+        }
+        net.minecraft.network.Packet<?> packet = event.getPacket();
+        if (event.getType() == EventType.SEND) {
+            if (packet instanceof net.minecraft.network.play.client.C02PacketUseEntity
+                    && ((net.minecraft.network.play.client.C02PacketUseEntity) packet).getAction()
+                    == net.minecraft.network.play.client.C02PacketUseEntity.Action.ATTACK) {
+                this.mwLastAttackTick = mc.thePlayer.ticksExisted;
+            }
+            if (packet instanceof net.minecraft.network.play.client.C0BPacketEntityAction) {
+                net.minecraft.network.play.client.C0BPacketEntityAction action =
+                        (net.minecraft.network.play.client.C0BPacketEntityAction) packet;
+                if (action.getAction()
+                        == net.minecraft.network.play.client.C0BPacketEntityAction.Action.START_SPRINTING) {
+                    this.mwServerSprint = true;
+                } else if (action.getAction()
+                        == net.minecraft.network.play.client.C0BPacketEntityAction.Action.STOP_SPRINTING) {
+                    this.mwServerSprint = false;
+                }
+            }
+            return false;
+        }
+        if (event.getType() != EventType.RECEIVE || event.isCancelled()) {
+            return false;
+        }
+        if (packet instanceof net.minecraft.network.play.server.S01PacketJoinGame
+                || packet instanceof net.minecraft.network.play.server.S07PacketRespawn) {
+            this.mwRelease();
+            this.mwCount = 0;
+            this.mwStuckTicks = 0;
+            return false;
+        }
+        if (packet instanceof net.minecraft.network.play.server.S08PacketPlayerPosLook
+                && this.mwDisableOnFlag.getValue()) {
+            this.mwWorldChangeTime = System.currentTimeMillis();
+            this.mwReset();
+            return false;
+        }
+        if (this.mwInactive()) {
+            return false;
+        }
+        if (this.mwDelaying) {
+            return false;
+        }
+        if (packet instanceof S27PacketExplosion) {
+            if (this.mwCancelExplosion.getValue()) {
+                event.setCancelled(true);
+                return true;
+            }
+            if (this.mwIgnoreExplosion.getValue()) {
+                return false;
+            }
+            return this.mwBeginDelay(event, packet);
+        }
+        if (packet instanceof S12PacketEntityVelocity
+                && ((S12PacketEntityVelocity) packet).getEntityID() == mc.thePlayer.getEntityId()) {
+            if (this.mwAttackReduce.getValue()) {
+                this.mwStrict = true;
+                this.mwAttackCount = 2;
+            }
+            return this.mwBeginDelay(event, packet);
+        }
+        return false;
+    }
+
     @EventTarget
     public void onKnockback(KnockbackEvent event) {
         if (!this.isEnabled() || event.isCancelled()) {
+            this.pendingExplosion = false;
+            this.allowNext = true;
+        } else if (this.mode.getValue() == MODE_JUMP) {
             this.pendingExplosion = false;
             this.allowNext = true;
         } else if (!this.allowNext || !(Boolean) this.fakeCheck.getValue()) {
@@ -83,7 +387,7 @@ public class Velocity extends Module {
             } else {
                 this.chanceCounter = this.chanceCounter % 100 + this.chance.getValue();
                 if (this.chanceCounter >= 100) {
-                    this.jumpFlag = (this.mode.getValue() == 1 || this.mode.getValue() == 2) && event.getY() > 0.0;
+                    this.jumpFlag = this.mode.getValue() == 2 && event.getY() > 0.0;
                     this.delayActive = this.mode.getValue() == 3;
                     if (this.horizontal.getValue() > 0) {
                         event.setX(event.getX() * (double) this.horizontal.getValue() / 100.0);
@@ -145,6 +449,64 @@ public class Velocity extends Module {
     }
 
     @EventTarget
+    public void onJumpReset(UpdateEvent event) {
+        if (!this.isEnabled() || !this.jumpResetActive() || mc.thePlayer == null) {
+            return;
+        }
+        if (event.getType() == EventType.POST) {
+            if (this.setJump && !KeyBindUtil.isKeyDown(mc.gameSettings.keyBindJump.getKeyCode())) {
+                this.setJump = false;
+                KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindJump.getKeyCode(), false);
+            }
+            return;
+        }
+        int hurtTime = mc.thePlayer.hurtTime;
+        boolean onGround = mc.thePlayer.onGround;
+        if (onGround && this.lastFallDistance > FALL_IGNORE_DISTANCE
+                && !mc.thePlayer.capabilities.allowFlying) {
+            this.ignoreNext = true;
+        }
+        if (hurtTime > this.lastHurtTime) {
+            boolean mouseDown = !this.requireMouseDown.getValue()
+                    || mc.gameSettings.keyBindAttack.isKeyDown();
+            boolean aimingAt = !this.requireAim.getValue() || isAimingAtPlayer();
+            boolean forward = !this.requireMovingForward.getValue()
+                    || mc.gameSettings.keyBindForward.isKeyDown();
+            boolean rolled = this.jumpChance.getValue() >= 100
+                    || Math.random() * 100.0 < this.jumpChance.getValue();
+            if (!this.ignoreNext && !mc.thePlayer.isBurning() && onGround && aimingAt && forward
+                    && mouseDown && rolled && !hasBadEffect() && knockbackInFov()) {
+                this.setJump = true;
+                KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindJump.getKeyCode(), true);
+            }
+            this.ignoreNext = false;
+        }
+        this.lastHurtTime = hurtTime;
+        this.lastFallDistance = mc.thePlayer.fallDistance;
+    }
+
+    private static boolean isAimingAtPlayer() {
+        MovingObjectPosition hit = mc.objectMouseOver;
+        return hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY
+                && hit.entityHit instanceof EntityPlayer;
+    }
+
+    private static boolean hasBadEffect() {
+        return mc.thePlayer.isPotionActive(Potion.jump)
+                || mc.thePlayer.isPotionActive(Potion.poison)
+                || mc.thePlayer.isPotionActive(Potion.wither);
+    }
+
+    private static boolean knockbackInFov() {
+        float heading = MoveUtil.getMoveYaw();
+        float pushYaw = (float) (Math.atan2(mc.thePlayer.motionX, mc.thePlayer.motionZ)
+                * 57.29578 * -1.0);
+        float half = JUMP_FOV * 0.5F;
+        double delta = MathHelper.wrapAngleTo180_double((heading - pushYaw) % 360.0F);
+        return delta > 0.0 ? delta < half : delta > -half;
+    }
+
+    @EventTarget
     public void onLivingUpdate(LivingUpdateEvent event) {
         if (this.jumpFlag) {
             this.jumpFlag = false;
@@ -156,6 +518,9 @@ public class Velocity extends Module {
 
     @EventTarget
     public void onPacket(PacketEvent event) {
+        if (this.mwHandlePacket(event)) {
+            return;
+        }
         if (this.isEnabled() && event.getType() == EventType.RECEIVE && !event.isCancelled()) {
             if (event.getPacket() instanceof S12PacketEntityVelocity) {
                 S12PacketEntityVelocity packet = (S12PacketEntityVelocity) event.getPacket();

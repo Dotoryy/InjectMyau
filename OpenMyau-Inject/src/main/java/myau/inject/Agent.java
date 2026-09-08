@@ -16,6 +16,7 @@ import java.util.Set;
 
 public final class Agent {
     private static volatile boolean installed;
+    private static volatile ClassLoader installedGameLoader;
     private Agent() {
     }
     public static void premain(String args, Instrumentation instrumentation) {
@@ -26,6 +27,11 @@ public final class Agent {
     }
     private static synchronized void install(Instrumentation instrumentation, boolean live) {
         if (installed) {
+            if (live && installedGameLoader != null && !clientRunning()) {
+                log("hooks already present and the client is unloaded -- starting it again");
+                startClient(installedGameLoader);
+                return;
+            }
             log("already installed, ignoring second attach");
             return;
         }
@@ -84,8 +90,20 @@ public final class Agent {
                 log("  " + failure);
             }
         }
+        installedGameLoader = gameLoader;
         if (live) {
             startClient(gameLoader);
+        }
+    }
+
+    private static boolean clientRunning() {
+        try {
+            Class<?> bootstrap =
+                    Class.forName("myau.inject.Bootstrap", false, installedGameLoader);
+            return Boolean.TRUE.equals(bootstrap.getMethod("isStarted").invoke(null));
+        } catch (Throwable t) {
+            log("cannot ask whether the client is running: " + t);
+            return true;
         }
     }
     private static ClassLoader installIntoGameLoader(List<Class<?>> targets) {

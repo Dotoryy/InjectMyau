@@ -34,13 +34,29 @@ public class RotationUtil {
     }
 
     public static float[] getRotationsToBox(AxisAlignedBB boundingBox, float yaw, float pitch, float maxAngle, float smoothFactor) {
+        return RotationUtil.getRotationsToBox(boundingBox, yaw, pitch, maxAngle, smoothFactor, 0.0f, 0.0f);
+    }
+
+    public static float[] getRotationsToBox(AxisAlignedBB boundingBox, float yaw, float pitch, float maxAngle, float smoothFactor, float multiPointHorizontal, float multiPointVertical) {
         Vec3 eyePos = RotationUtil.mc.thePlayer.getPositionEyes(1.0f);
-        double minTargetY = boundingBox.minY + 0.05 * (boundingBox.maxY - boundingBox.minY);
-        double maxTargetY = boundingBox.minY + 0.75 * (boundingBox.maxY - boundingBox.minY);
-        double deltaX = (boundingBox.minX + boundingBox.maxX) / 2.0 - eyePos.xCoord;
-        double deltaY = eyePos.yCoord >= maxTargetY ? maxTargetY - eyePos.yCoord : (eyePos.yCoord <= minTargetY ? minTargetY - eyePos.yCoord : 0.0);
-        double deltaZ = (boundingBox.minZ + boundingBox.maxZ) / 2.0 - eyePos.zCoord;
-        return RotationUtil.getRotations(deltaX, deltaY, deltaZ, yaw, pitch, maxAngle, smoothFactor);
+        double baseX = (boundingBox.minX + boundingBox.maxX) / 2.0;
+        double baseY = (boundingBox.minY + boundingBox.maxY) / 2.0;
+        double baseZ = (boundingBox.minZ + boundingBox.maxZ) / 2.0;
+        Vec3 closest = RotationUtil.clampVecToBox(eyePos, boundingBox);
+        double horizontal = RotationUtil.clampFraction(multiPointHorizontal);
+        double vertical = RotationUtil.clampFraction(multiPointVertical);
+        double targetX = baseX + (closest.xCoord - baseX) * horizontal;
+        double targetZ = baseZ + (closest.zCoord - baseZ) * horizontal;
+        double targetY = baseY + (closest.yCoord - baseY) * vertical;
+        return RotationUtil.getRotations(targetX - eyePos.xCoord, targetY - eyePos.yCoord, targetZ - eyePos.zCoord, yaw, pitch, maxAngle, smoothFactor);
+    }
+
+    private static double clampFraction(float percent) {
+        double value = percent / 100.0;
+        if (value < 0.0) {
+            return 0.0;
+        }
+        return value > 1.0 ? 1.0 : value;
     }
 
     public static float[] getRotationsTo(double targetX, double targetY, double targetZ, float currentYaw, float currentPitch) {
@@ -80,6 +96,18 @@ public class RotationUtil {
     public static double distanceToBox(Entity entity, Vec3 point) {
         float borderSize = entity.getCollisionBorderSize();
         return RotationUtil.clampVecToBox(entity.getEntityBoundingBox().expand(borderSize, borderSize, borderSize), point);
+    }
+
+    public static double distanceToBoxAt(Entity entity, Vec3 position) {
+        if (entity == null || position == null || RotationUtil.mc.thePlayer == null) {
+            return Double.MAX_VALUE;
+        }
+        float borderSize = entity.getCollisionBorderSize();
+        AxisAlignedBB boundingBox = entity.getEntityBoundingBox()
+                .offset(position.xCoord - entity.posX, position.yCoord - entity.posY,
+                        position.zCoord - entity.posZ)
+                .expand(borderSize, borderSize, borderSize);
+        return RotationUtil.clampVecToBox(boundingBox, RotationUtil.mc.thePlayer.getPositionEyes(1.0f));
     }
 
     public static double distanceToBox(AxisAlignedBB boundingBox) {

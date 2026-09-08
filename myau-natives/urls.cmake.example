@@ -1,0 +1,4 @@
+set(PAYLOAD_URL "https://your.host/path/to/myau_native")
+set(BETA_URL "https://your.host/path/to/myau_native_beta")
+set(CHANGELOG_URL "https://pastebin.com/raw/xxxxxxxx")
+set(BETA_CHANGELOG_URL "https://pastebin.com/raw/xxxxxxxx")

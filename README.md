@@ -50,9 +50,16 @@ The jar lands in `OpenMyau-Inject/build/libs/`. On Windows use `gradlew.bat`.
 
 ```bash
 cd myau-natives
+cp urls.cmake.example urls.cmake
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DJAVA_INCLUDE="<your-jdk>/include"
 cmake --build build --config Release
 ```
+
+`urls.cmake` is where the loader gets the addresses it downloads the payload and the changelog
+from, one entry per release channel. It is not in the repository — copy the example, put your own
+hosting in it, and it stays local. Without it the build falls back to `example.invalid` and the
+loader has nowhere to download from. Passing `-DPAYLOAD_URL=` and friends on the command line works
+too and overrides the file.
 
 `JAVA_INCLUDE` is only needed if `JAVA_HOME` is not already pointing at a JDK — the build reads it
 from there by default. It has to be a JDK and not a JRE, because the injected DLL is a JVMTI agent
@@ -114,5 +121,16 @@ separate implementations of the same hooks, so anything touching one usually has
 ## Credits
 
 Based on Myau 250910, and on [OpenMyau](https://github.com/60124808866/OpenMyau). The click GUI came
-from Raven b3 by blowsy. Various modules are ported from Raven and Rise, and are marked as such in
-the source.
+from Raven b3 by blowsy. Various modules are ported from Raven, Rise and Astralis.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
+License for more details.

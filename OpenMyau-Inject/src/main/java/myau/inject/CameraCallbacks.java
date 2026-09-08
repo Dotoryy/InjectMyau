@@ -7,7 +7,6 @@ import myau.event.EventManager;
 import myau.events.PickEvent;
 import myau.events.RaytraceEvent;
 import myau.module.modules.AntiDebuff;
-import myau.module.modules.Autoblock;
 import myau.module.modules.GhostHand;
 import myau.module.modules.KillAura;
 import myau.module.modules.NoHurtCam;
@@ -50,9 +49,7 @@ public final class CameraCallbacks {
                 }
             }
             KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
-            Autoblock autoblock = (Autoblock) Myau.moduleManager.modules.get(Autoblock.class);
-            if (killAura.isEnabled() && killAura.isBlocking()
-                    || autoblock != null && autoblock.isForcingAnimation()) {
+            if (killAura.isEnabled() && killAura.isBlocking()) {
                 savedUsing = AccessorEntityPlayer.getItemInUse(mc.thePlayer);
                 usingSaved = true;
                 AccessorEntityPlayer.setItemInUse(mc.thePlayer,

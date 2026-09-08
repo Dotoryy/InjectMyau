@@ -8,7 +8,6 @@ import myau.event.EventTarget;
 import myau.event.types.EventType;
 import myau.event.types.Priority;
 import myau.events.*;
-import myau.access.AccessorItemTool;
 import myau.access.AccessorPlayerControllerMP;
 import myau.module.Module;
 import myau.property.properties.*;
@@ -82,6 +81,7 @@ public class KillAura extends Module {
     private static final int BLOCK_DELAY_SUPPRESS = 2;
     private static final int VELOCITY_TICKS_CAP = 1000;
     private int ticksSinceVelocity = VELOCITY_TICKS_CAP;
+    private static final int AUTOBLOCK_NONE = 0;
     private static final int AUTOBLOCK_WATCHDOG = 9;
 
     private int watchdogStage;
@@ -91,6 +91,7 @@ public class KillAura extends Module {
     private static final int ROTATION_LEGIT = 1;
     private static final int ROTATION_SILENT = 2;
     private static final int ROTATION_LOCK = 3;
+    private static final int ROTATION_LOCK_ON = 4;
     public final ModeProperty mode;
     public final ModeProperty sort;
     public final ModeProperty autoBlock;
@@ -113,6 +114,8 @@ public class KillAura extends Module {
     public final ModeProperty moveFix;
     public final FloatProperty rotationSpeedMin;
     public final FloatProperty rotationSpeedMax;
+    public final PercentProperty multiPointHorizontal;
+    public final PercentProperty multiPointVertical;
     public final PercentProperty smoothing;
     public final IntProperty angleStep;
     public final BooleanProperty throughWalls;
@@ -152,7 +155,7 @@ public class KillAura extends Module {
             } else if (item instanceof ItemPickaxe) {
                 speed = 1.2;
             } else if (item instanceof ItemAxe) {
-                Item.ToolMaterial material = AccessorItemTool.getToolMaterial((ItemTool) item);
+                Item.ToolMaterial material = ((ItemTool) item).getToolMaterial();
                 if (material == Item.ToolMaterial.WOOD || material == Item.ToolMaterial.STONE) {
                     speed = 0.8;
                 } else if (material == Item.ToolMaterial.IRON) {
@@ -161,7 +164,7 @@ public class KillAura extends Module {
                     speed = 1.0;
                 }
             } else if (item instanceof ItemHoe) {
-                Item.ToolMaterial material = AccessorItemTool.getToolMaterial((ItemTool) item);
+                Item.ToolMaterial material = ((ItemTool) item).getToolMaterial();
                 if (material == Item.ToolMaterial.WOOD || material == Item.ToolMaterial.GOLD) {
                     speed = 1.0;
                 } else if (material == Item.ToolMaterial.STONE) {
@@ -202,8 +205,12 @@ public class KillAura extends Module {
         }
         return 6;
     }
+    private boolean attackReduceOverride() {
+        Velocity velocity = (Velocity) Myau.moduleManager.modules.get(Velocity.class);
+        return velocity != null && velocity.isAttackReduceActive();
+    }
     private boolean isHitSelectSatisfied() {
-        if (this.clickDelayMode.getValue() != CLICK_HIT_SELECT) {
+        if (this.clickDelayMode.getValue() != CLICK_HIT_SELECT || this.attackReduceOverride()) {
             return true;
         }
         long window = Math.max(0L, this.getPing() / 50L - 1L);
@@ -221,7 +228,7 @@ public class KillAura extends Module {
                 > this.attackRange.getValue() + SPRINT_STOP_RANGE_SLACK) {
             return false;
         }
-        return keepSprint.shouldDeferAttack();
+        return keepSprint.shouldDeferAttack(this.target.getEntity());
     }
 
     private long getPing() {
@@ -269,7 +276,11 @@ public class KillAura extends Module {
         }
         return BLOCK_DELAY_PASSTHROUGH;
     }
+    private int lastAttackTick = -1;
     private boolean performAttack(float yaw, float pitch) {
+        if (mc.thePlayer != null && this.lastAttackTick == mc.thePlayer.ticksExisted) {
+            return false;
+        }
         if (this.attackGatesPassed()) {
             if (this.isSprintStopPending()) {
                 return false;
@@ -282,12 +293,21 @@ public class KillAura extends Module {
                 } else {
                     AttackEvent event = new AttackEvent(this.target.getEntity());
                     EventManager.call(event);
+                    if (event.isCancelled()) {
+                        return false;
+                    }
+                    KeepSprint keepSprint =
+                            (KeepSprint) Myau.moduleManager.modules.get(KeepSprint.class);
+                    if (keepSprint != null) {
+                        keepSprint.confirmAttack();
+                    }
                     AccessorPlayerControllerMP.callSyncCurrentPlayItem(mc.playerController);
                     PacketUtil.sendPacket(new C02PacketUseEntity(this.target.getEntity(), Action.ATTACK));
                     if (mc.playerController.getCurrentGameType() != GameType.SPECTATOR) {
                         PlayerUtil.attackEntity(this.target.getEntity());
                     }
                     this.hitRegistered = true;
+                    this.lastAttackTick = mc.thePlayer.ticksExisted;
                     this.tellHitSelect();
                     return true;
                 }
@@ -297,6 +317,9 @@ public class KillAura extends Module {
         }
     }
     private boolean blockedByHitSelect() {
+        if (this.attackReduceOverride()) {
+            return false;
+        }
         HitSelect hitSelect = (HitSelect) Myau.moduleManager.modules.get(HitSelect.class);
         return hitSelect != null
                 && hitSelect.isEnabled()
@@ -394,9 +417,12 @@ public class KillAura extends Module {
                         : 180.0F,
                 this.rotations.getValue() == ROTATION_LOCK
                         ? (float) this.smoothing.getValue() / 100.0F
-                        : 0.0F
+                        : 0.0F,
+                (float) this.multiPointHorizontal.getValue(),
+                (float) this.multiPointVertical.getValue()
         );
-        if (this.rotations.getValue() == ROTATION_LOCK) {
+        if (this.rotations.getValue() == ROTATION_LOCK
+                || this.rotations.getValue() == ROTATION_LOCK_ON) {
             return target;
         }
         double speed = RandomUtil.nextFloat(
@@ -603,13 +629,17 @@ public class KillAura extends Module {
                 () -> this.randomize19Speed.getValue() && this.isModernClickDelay());
         this.switchDelay = new IntProperty("switch-delay", 150, 0, 1000);
         this.rotations = new ModeProperty("rotations", ROTATION_SILENT,
-                new String[]{"NONE", "LEGIT", "SILENT", "LOCK"});
+                new String[]{"NONE", "LEGIT", "SILENT", "LOCK", "LOCK-ON"});
         this.moveFix = new ModeProperty("move-fix", 1, new String[]{"NONE", "SILENT", "STRICT"});
         this.rotationSpeedMin = new FloatProperty("rotation-speed-min", 5.0F, 0.0F, 10.0F,
                 () -> this.rotations.getValue() == ROTATION_SILENT);
         this.rotationSpeedMax = new FloatProperty("rotation-speed-max", 10.0F, 0.0F, 10.0F,
                 () -> this.rotations.getValue() == ROTATION_SILENT);
         this.smoothing = new PercentProperty("smoothing", 0, () -> this.rotations.getValue() == ROTATION_LOCK);
+        this.multiPointHorizontal = new PercentProperty("multipoint-horizontal", 0,
+                () -> this.rotations.getValue() != ROTATION_NONE);
+        this.multiPointVertical = new PercentProperty("multipoint-vertical", 0,
+                () -> this.rotations.getValue() != ROTATION_NONE);
         this.angleStep = new IntProperty("angle-step", 90, 30, 180,
                 () -> this.rotations.getValue() == ROTATION_LOCK);
         this.throughWalls = new BooleanProperty("through-walls", true);
@@ -950,10 +980,12 @@ public class KillAura extends Module {
                     if (this.rotations.getValue() >= ROTATION_SILENT) {
                         float[] rotations = this.computeRotations(event);
                         event.setRotation(rotations[0], rotations[1], 1);
-                        if (this.rotations.getValue() == ROTATION_LOCK) {
+                        if (this.rotations.getValue() == ROTATION_LOCK
+                                || this.rotations.getValue() == ROTATION_LOCK_ON) {
                             Myau.rotationManager.setRotation(rotations[0], rotations[1], 1, true);
                         }
-                        if (this.moveFix.getValue() != 0 || this.rotations.getValue() == ROTATION_LOCK) {
+                        if (this.moveFix.getValue() != 0 || this.rotations.getValue() == ROTATION_LOCK
+                                || this.rotations.getValue() == ROTATION_LOCK_ON) {
                             event.setPervRotation(rotations[0], 1);
                         }
                     }
@@ -1167,9 +1199,14 @@ public class KillAura extends Module {
         }
         if (this.isBlocking) {
             event.setCancelled(true);
-        } else if (this.isEnabled() && this.target != null && this.canAttack()) {
+        } else if (this.isEnabled() && this.isManagingBlock() && this.target != null
+                && this.canAttack()) {
             event.setCancelled(true);
         }
+    }
+
+    private boolean isManagingBlock() {
+        return this.autoBlock.getValue() != AUTOBLOCK_NONE;
     }
     @EventTarget
     public void onHitBlock(HitBlockEvent event) {

@@ -7,6 +7,11 @@ import myau.event.types.EventType;
 import myau.events.KeyEvent;
 import org.lwjgl.input.Keyboard;
 import myau.events.LeftClickMouseEvent;
+import myau.events.MouseButtonEvent;
+import myau.events.PreAttackEvent;
+import myau.events.RightClickMouseEvent;
+import myau.events.PrePlayerInteractEvent;
+import myau.events.UseItemEvent;
 import myau.module.modules.InventoryMove;
 import myau.events.Render2DEvent;
 import myau.events.Render2DPostEvent;
@@ -39,11 +44,15 @@ public final class Callbacks {
             if (!Bootstrap.isStarted() || !GameState.inGame()) {
                 return;
             }
+            tickSequence++;
             EventManager.call(new TickEvent(EventType.PRE));
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);
         }
     }
+
+    private static long tickSequence;
+    private static long lastInteractTick = -1L;
 
     public static void render2DPre(float partialTicks) {
         overlayPartialTicks = partialTicks;
@@ -68,6 +77,46 @@ public final class Callbacks {
             Log.swallowed(swallowed);
         }
     }
+    public static void prePlayerInteract() {
+        try {
+            if (!Bootstrap.isStarted() || !GameState.inGame()) {
+                return;
+            }
+            if (lastInteractTick == tickSequence) {
+                return;
+            }
+            lastInteractTick = tickSequence;
+            EventManager.call(new PrePlayerInteractEvent());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static Boolean sendUseItem(Object stack) {
+        try {
+            if (!Bootstrap.isStarted()) {
+                return null;
+            }
+            UseItemEvent event = new UseItemEvent((net.minecraft.item.ItemStack) stack);
+            EventManager.call(event);
+            return event.isCancelled() ? Boolean.FALSE : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    public static boolean rightClickMouse() {
+        try {
+            if (!Bootstrap.isStarted() || !GameState.inGame()) {
+                return false;
+            }
+            RightClickMouseEvent event = new RightClickMouseEvent();
+            EventManager.call(event);
+            return event.isCancelled();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     public static boolean clickMouse() {
         try {
             if (!Bootstrap.isStarted()) {
@@ -78,6 +127,12 @@ public final class Callbacks {
                     && Myau.moduleManager.modules.get(NoHitDelay.class).isEnabled()) {
                 AccessorMinecraft.setLeftClickCounter(mc, 0);
             }
+            PreAttackEvent preAttack =
+                    new PreAttackEvent(Minecraft.getMinecraft().objectMouseOver);
+            EventManager.call(preAttack);
+            if (preAttack.isCancelled()) {
+                return true;
+            }
             LeftClickMouseEvent event = new LeftClickMouseEvent();
             EventManager.call(event);
             return event.isCancelled();
@@ -87,10 +142,21 @@ public final class Callbacks {
         }
     }
 
-    public static void keyBindStatePre(int key, boolean pressed) {
+    public static boolean keyBindStatePre(int key, boolean pressed) {
         lastKey = key;
         lastPressed = pressed;
         lastSynthetic = KeyBindUtil.isSynthetic();
+        try {
+            if (!Bootstrap.isStarted() || lastSynthetic || key >= 0) {
+                return false;
+            }
+            MouseButtonEvent event = new MouseButtonEvent(key + 100, pressed);
+            EventManager.call(event);
+            return event.isCancelled();
+        } catch (Throwable swallowed) {
+            Log.swallowed(swallowed);
+            return false;
+        }
     }
     public static void guiKeyboardInput() {
         try {

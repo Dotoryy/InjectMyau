@@ -44,6 +44,8 @@ public final class Categories {
             case COMBAT:
                 add(modules, AimAssist.class);
                 add(modules, AutoClicker.class);
+                add(modules, Autoblock.class);
+                add(modules, Displace.class);
                 add(modules, KillAura.class);
                 add(modules, Wtap.class);
                 add(modules, Velocity.class);
@@ -53,13 +55,13 @@ public final class Categories {
                 add(modules, NoHitDelay.class);
                 add(modules, AntiFireball.class);
                 add(modules, LagRange.class);
+                add(modules, KnockbackDelay.class);
+                add(modules, Backtrack.class);
                 add(modules, HitBox.class);
                 add(modules, MoreKB.class);
                 add(modules, Refill.class);
                 add(modules, HitSelect.class);
                 add(modules, AntiBot.class);
-                add(modules, Autoblock.class);
-                add(modules, Displace.class);
                 break;
             case MOVEMENT:
                 add(modules, AntiAFK.class);
@@ -70,6 +72,7 @@ public final class Categories {
                 add(modules, SafeWalk.class);
                 add(modules, Jesus.class);
                 add(modules, Blink.class);
+                add(modules, FakeLag.class);
                 add(modules, NoFall.class);
                 add(modules, NoSlow.class);
                 add(modules, KeepSprint.class);
@@ -81,6 +84,8 @@ public final class Categories {
                 add(modules, InventoryMove.class);
                 break;
             case RENDER:
+                add(modules, BlockCounter.class);
+                add(modules, FallView.class);
                 add(modules, ESP.class);
                 add(modules, Chams.class);
                 add(modules, FullBright.class);
@@ -101,11 +106,13 @@ public final class Categories {
                 add(modules, Radar.class);
                 break;
             case PLAYER:
+                add(modules, Clutch.class);
                 add(modules, AutoHeal.class);
                 add(modules, AutoTool.class);
                 add(modules, ChestStealer.class);
                 add(modules, InvManager.class);
                 add(modules, Scaffold.class);
+                add(modules, GodBridge.class);
                 add(modules, BlockIn.class);
                 add(modules, FastBreak.class);
                 add(modules, AutoPot.class);
@@ -116,6 +123,7 @@ public final class Categories {
                 add(modules, AntiDebuff.class);
                 break;
             case MISC:
+                add(modules, UnInject.class);
                 add(modules, Spammer.class);
                 add(modules, BedNuker.class);
                 add(modules, BedDefender.class);

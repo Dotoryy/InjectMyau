@@ -8,15 +8,38 @@ import java.util.function.BooleanSupplier;
 public class FloatProperty extends Property<Float> {
     private final Float minimum;
     private final Float maximum;
+    private final float step;
 
     public FloatProperty(String name, Float value, Float minimum, Float maximum) {
         this(name, value, minimum, maximum, null);
     }
 
     public FloatProperty(String string, Float value, Float minimum, Float maximum, BooleanSupplier check) {
+        this(string, value, minimum, maximum, 0.0F, check);
+    }
+
+    public FloatProperty(String name, Float value, Float minimum, Float maximum, float step) {
+        this(name, value, minimum, maximum, step, null);
+    }
+
+    public FloatProperty(String string, Float value, Float minimum, Float maximum, float step, BooleanSupplier check) {
         super(string, value, floatV -> floatV >= 0 && floatV <= Float.MAX_VALUE, check);
         this.minimum = minimum;
         this.maximum = maximum;
+        this.step = step;
+    }
+
+    public float getStep() {
+        return this.step;
+    }
+
+    public float snap(float value) {
+        if (this.step <= 0.0F) {
+            return value;
+        }
+        double notches = Math.round((value - this.minimum) / (double) this.step);
+        double snapped = this.minimum + notches * this.step;
+        return (float) Math.max(this.minimum, Math.min(this.maximum, snapped));
     }
 
     @Override

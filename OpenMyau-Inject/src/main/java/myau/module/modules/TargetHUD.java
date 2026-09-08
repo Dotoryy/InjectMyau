@@ -14,11 +14,17 @@ import myau.ui.clickgui.GuiRender;
 import myau.util.RenderUtil;
 import myau.util.TeamUtil;
 import myau.util.TimerUtil;
+import myau.util.animation.Animation;
+import myau.util.animation.ContinualAnimation;
+import myau.util.animation.DecelerateAnimation;
+import myau.util.animation.Direction;
 import myau.property.properties.*;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.AbstractClientPlayer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.client.network.NetworkPlayerInfo;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.entity.Entity;
@@ -37,6 +43,36 @@ import java.util.Locale;
 
 public class TargetHUD extends Module {
     private static final int MODE_RAVEN = 1;
+    private static final int MODE_ASTOLFO = 2;
+    private static final int MODE_NOVOLINE = 3;
+    private static final float NOVO_HEIGHT = 42.0F;
+    private static final float NOVO_BASE_WIDTH = 74.0F;
+    private static final float NOVO_HEAD = 40.0F;
+    private static final float NOVO_CONTENT_X = 44.0F;
+    private static final float NOVO_NAME_Y = 10.0F;
+    private static final float NOVO_BAR_Y = 22.0F;
+    private static final float NOVO_BAR_HEIGHT = 11.0F;
+    private static final float NOVO_BAR_RIGHT_PAD = 4.0F;
+    private static final float NOVO_FONT_DESCENT = 2.0F;
+    private static final int NOVO_WIDTH_MS = 300;
+    private static final int NOVO_HEALTH_MS = 500;
+
+    private static final String ASTOLFO_NAME_SAMPLE = "WWWWWWWWWWWWWWWW";
+    private static final float ASTOLFO_HEALTH_GAP = 6.0F;
+    private static final float ASTOLFO_FONT_DESCENT = 2.0F;
+    private static final float ASTOLFO_BAR_HEIGHT = 7.5F;
+    private static final float ASTOLFO_BAR_DROP = 0.0F;
+    private static final float ASTOLFO_BOTTOM_PAD = 3.0F;
+    private static final float ASTOLFO_NAME_Y = 4.0F;
+    private static final float ASTOLFO_WIDTH_PAD = 53.0F;
+    private static final int ASTOLFO_MODEL_SCALE = 22;
+    public final FloatProperty astolfoHealthScale = new FloatProperty("astolfo-health-scale",
+            2.0F, 1.0F, 2.5F, 0.1F, () -> this.mode.getValue() == MODE_ASTOLFO);
+    public final BooleanProperty astolfoSharpHealth = new BooleanProperty("astolfo-sharp-health",
+            false, () -> this.mode.getValue() == MODE_ASTOLFO);
+    private static final int ASTOLFO_HEALTH_MS = 18;
+    private static final int ASTOLFO_OPEN_MS = 175;
+    private static final double ASTOLFO_OPEN_ENDPOINT = 0.5;
 
     private static final Minecraft mc = Minecraft.getMinecraft();
     private static final DecimalFormat healthFormat = new DecimalFormat("0.0", new DecimalFormatSymbols(Locale.US));
@@ -68,7 +104,19 @@ public class TargetHUD extends Module {
     private static final int RAVEN_MAX_OUTLINE_ALPHA = 255;
     private static final float RAVEN_BAR_RADIUS = 4.0F;
     private static final float RAVEN_BAR_HEIGHT = 5.0F;
-    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"MYAU", "RAVEN"});
+    private static final DecimalFormat astolfoHealthFormat =
+            new DecimalFormat("0.#", new DecimalFormatSymbols(Locale.US));
+    private final ContinualAnimation astolfoHealth = new ContinualAnimation();
+    private final Animation astolfoOpen =
+            new DecelerateAnimation(ASTOLFO_OPEN_MS, ASTOLFO_OPEN_ENDPOINT, Direction.BACKWARDS);
+    private EntityLivingBase astolfoTarget = null;
+    private final ContinualAnimation novoWidth = new ContinualAnimation();
+    private final ContinualAnimation novoHealth = new ContinualAnimation();
+    private final Animation novoOpen =
+            new DecelerateAnimation(ASTOLFO_OPEN_MS, ASTOLFO_OPEN_ENDPOINT, Direction.BACKWARDS);
+    private EntityLivingBase novoTarget = null;
+    public final ModeProperty mode = new ModeProperty("mode", 0,
+            new String[]{"MYAU", "RAVEN", "ASTOLFO", "NOVOLINE"});
     public final ModeProperty ravenStyle = new ModeProperty("raven-style", 0, new String[]{"MODERN", "LEGACY"},
             () -> this.mode.getValue() == MODE_RAVEN);
     public final ModeProperty color = new ModeProperty("color", 0, new String[]{"DEFAULT", "HUD"});
@@ -145,6 +193,18 @@ public class TargetHUD extends Module {
                     this.animTimer.setTime();
                     this.oldHealth = heal;
                     this.newHealth = heal;
+                }
+                if (this.mode.getValue() == MODE_ASTOLFO) {
+                    this.astolfoTarget = this.target;
+                    this.astolfoOpen.setDirection(Direction.FORWARDS);
+                    this.renderAstolfo(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_NOVOLINE) {
+                    this.novoTarget = this.target;
+                    this.novoOpen.setDirection(Direction.FORWARDS);
+                    this.renderNovoline(this.target);
+                    return;
                 }
                 if (!this.animations.getValue() || this.animTimer.hasTimeElapsed(150L)) {
                     this.oldHealth = this.newHealth;
@@ -235,9 +295,254 @@ public class TargetHUD extends Module {
                 GlStateManager.disableBlend();
                 GlStateManager.enableDepth();
                 GlStateManager.popMatrix();
+            } else if (this.mode.getValue() == MODE_ASTOLFO && this.astolfoTarget != null) {
+                this.astolfoOpen.setDirection(Direction.BACKWARDS);
+                if (this.astolfoOpen.finished(Direction.BACKWARDS)
+                        || !TeamUtil.isEntityLoaded(this.astolfoTarget)) {
+                    this.astolfoTarget = null;
+                } else {
+                    this.renderAstolfo(this.astolfoTarget);
+                }
+            } else if (this.mode.getValue() == MODE_NOVOLINE && this.novoTarget != null) {
+                this.novoOpen.setDirection(Direction.BACKWARDS);
+                if (this.novoOpen.finished(Direction.BACKWARDS)
+                        || !TeamUtil.isEntityLoaded(this.novoTarget)) {
+                    this.novoTarget = null;
+                } else {
+                    this.renderNovoline(this.novoTarget);
+                }
             }
         }
     }
+
+
+    private void renderNovoline(EntityLivingBase target) {
+        float alpha = (float) Math.min(1.0, this.novoOpen.getOutput() * 2.0);
+        if (alpha <= 0.0F) {
+            return;
+        }
+        ScaledResolution resolution = new ScaledResolution(mc);
+        String name = target.getName();
+        float nameWidth = mc.fontRendererObj.getStringWidth(name);
+        this.novoWidth.animate(NOVO_BASE_WIDTH + nameWidth, NOVO_WIDTH_MS);
+        float width = this.novoWidth.getOutput();
+        if (width <= 0.0F) {
+            width = NOVO_BASE_WIDTH + nameWidth;
+        }
+
+        float absorption = target.getAbsorptionAmount();
+        float health = Math.min(target.getHealth() + absorption, target.getMaxHealth() + absorption);
+        float maxHealth = Math.max(1.0F, target.getMaxHealth() + absorption);
+        float ratio = Math.min(Math.max(health / maxHealth, 0.0F), 1.0F);
+
+        float scale = this.scale.getValue();
+        float x = this.offX.getValue().floatValue() / scale;
+        switch (this.posX.getValue()) {
+            case 1:
+                x += (float) resolution.getScaledWidth() / scale / 2.0F - width / 2.0F;
+                break;
+            case 2:
+                x *= -1.0F;
+                x += (float) resolution.getScaledWidth() / scale - width;
+        }
+        float y = this.offY.getValue().floatValue() / scale;
+        switch (this.posY.getValue()) {
+            case 1:
+                y += (float) resolution.getScaledHeight() / scale / 2.0F - NOVO_HEIGHT / 2.0F;
+                break;
+            case 2:
+                y *= -1.0F;
+                y += (float) resolution.getScaledHeight() / scale - NOVO_HEIGHT;
+        }
+
+        HUD hud = (HUD) Myau.moduleManager.modules.get(HUD.class);
+        Color accent = hud == null ? Color.WHITE : hud.getStaticColor();
+
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(scale, scale, scale);
+        RenderUtil.enableRenderState();
+
+        RenderUtil.drawRect(x, y, x + width, y + NOVO_HEIGHT,
+                applyOpacity(new Color(40, 40, 40), alpha).getRGB());
+
+        float barX = x + NOVO_CONTENT_X;
+        float barWidth = Math.max(1.0F, width - NOVO_CONTENT_X - NOVO_BAR_RIGHT_PAD);
+        float barTop = y + NOVO_BAR_Y;
+        float barBottom = barTop + NOVO_BAR_HEIGHT;
+        RenderUtil.drawRect(barX, barTop, barX + barWidth, barBottom,
+                applyOpacity(new Color(21, 21, 21, 150), alpha).getRGB());
+
+        float filled = barWidth * ratio;
+        this.novoHealth.animate(filled, NOVO_HEALTH_MS);
+        float trail = Math.min(Math.max(this.novoHealth.getOutput(), 0.0F), barWidth);
+        RenderUtil.drawRect(barX, barTop, barX + trail, barBottom,
+                applyOpacity(accent.brighter(), alpha).getRGB());
+        RenderUtil.drawRect(barX, barTop, barX + filled, barBottom,
+                applyOpacity(accent, alpha).getRGB());
+
+        RenderUtil.disableRenderState();
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        GlStateManager.disableDepth();
+        GlStateManager.disableCull();
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        mc.fontRendererObj.drawStringWithShadow(name, x + NOVO_CONTENT_X, y + NOVO_NAME_Y,
+                applyOpacity(Color.WHITE, alpha).getRGB());
+
+        String percent = String.format(Locale.US, "%.1f%%", ratio * 100.0F);
+        float percentWidth = mc.fontRendererObj.getStringWidth(percent);
+        mc.fontRendererObj.drawStringWithShadow(percent,
+                barX + barWidth / 2.0F - percentWidth / 2.0F,
+                barTop + (NOVO_BAR_HEIGHT - (mc.fontRendererObj.FONT_HEIGHT - NOVO_FONT_DESCENT)) / 2.0F,
+                applyOpacity(Color.WHITE, alpha).getRGB());
+
+        this.drawNovolineHead(target, x + 1.0F, y + 1.0F, NOVO_HEAD, alpha);
+
+        GlStateManager.enableCull();
+        GlStateManager.enableDepth();
+        GlStateManager.disableBlend();
+        GlStateManager.popMatrix();
+    }
+
+    private void drawNovolineHead(EntityLivingBase target, float x, float y, float size, float alpha) {
+        if (!(target instanceof AbstractClientPlayer)) {
+            return;
+        }
+        AbstractClientPlayer player = (AbstractClientPlayer) target;
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(770, 771);
+        GlStateManager.enableTexture2D();
+        GlStateManager.color(1.0F, 1.0F, 1.0F, alpha);
+        mc.getTextureManager().bindTexture(player.getLocationSkin());
+        drawSkinQuad(x, y, size, 8.0F, 8.0F);
+        drawSkinQuad(x, y, size, 40.0F, 8.0F);
+        GlStateManager.resetColor();
+    }
+
+    private static void drawSkinQuad(float x, float y, float size, float u, float v) {
+        float u0 = u / 64.0F;
+        float v0 = v / 64.0F;
+        float u1 = (u + 8.0F) / 64.0F;
+        float v1 = (v + 8.0F) / 64.0F;
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glTexCoord2f(u0, v0);
+        GL11.glVertex2f(x, y);
+        GL11.glTexCoord2f(u0, v1);
+        GL11.glVertex2f(x, y + size);
+        GL11.glTexCoord2f(u1, v1);
+        GL11.glVertex2f(x + size, y + size);
+        GL11.glTexCoord2f(u1, v0);
+        GL11.glVertex2f(x + size, y);
+        GL11.glEnd();
+    }
+
+    private void renderAstolfo(EntityLivingBase target) {
+        float alpha = (float) Math.min(1.0, this.astolfoOpen.getOutput() * 2.0);
+        if (alpha <= 0.0F) {
+            return;
+        }
+        ScaledResolution resolution = new ScaledResolution(mc);
+        float healthScale = this.astolfoHealthScale.getValue();
+        float glyphHeight = mc.fontRendererObj.FONT_HEIGHT - ASTOLFO_FONT_DESCENT;
+        float healthTop = ASTOLFO_NAME_Y + glyphHeight + ASTOLFO_HEALTH_GAP;
+        float healthBottom = healthTop + glyphHeight * healthScale;
+        float barTop = healthBottom + ASTOLFO_HEALTH_GAP + ASTOLFO_BAR_DROP;
+        float barBottom = barTop + ASTOLFO_BAR_HEIGHT;
+        float panelHeight = barBottom + ASTOLFO_BOTTOM_PAD;
+        float absorption = target.getAbsorptionAmount();
+        float width = mc.fontRendererObj.getStringWidth(ASTOLFO_NAME_SAMPLE) + ASTOLFO_WIDTH_PAD;
+        double healthPercentage = Math.min(Math.max(
+                (target.getHealth() + absorption) / (target.getMaxHealth() + absorption), 0.0F), 1.0F);
+
+        float scale = this.scale.getValue();
+        float x = this.offX.getValue().floatValue() / scale;
+        switch (this.posX.getValue()) {
+            case 1:
+                x += (float) resolution.getScaledWidth() / scale / 2.0F - width / 2.0F;
+                break;
+            case 2:
+                x *= -1.0F;
+                x += (float) resolution.getScaledWidth() / scale - width;
+        }
+        float y = this.offY.getValue().floatValue() / scale;
+        switch (this.posY.getValue()) {
+            case 1:
+                y += (float) resolution.getScaledHeight() / scale / 2.0F - panelHeight / 2.0F;
+                break;
+            case 2:
+                y *= -1.0F;
+                y += (float) resolution.getScaledHeight() / scale - panelHeight;
+        }
+
+        HUD hud = (HUD) Myau.moduleManager.modules.get(HUD.class);
+        Color first = hud == null ? Color.WHITE : hud.getStaticColor();
+        Color c1 = applyOpacity(first, alpha);
+
+        float openScale = (float) (0.5 + this.astolfoOpen.getOutput());
+
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(scale, scale, 0.0F);
+        GlStateManager.translate(x + width / 2.0F, y + panelHeight / 2.0F, -450.0F);
+        GlStateManager.scale(openScale, openScale, 1.0F);
+        GlStateManager.translate(-(x + width / 2.0F), -(y + panelHeight / 2.0F), 0.0F);
+
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x, y, x + width, y + panelHeight,
+                new Color(0.0F, 0.0F, 0.0F, 0.6F * alpha).getRGB());
+
+        RenderUtil.drawRect(x + 34.0F, y + barTop, x + width - 4.0F, y + barBottom,
+                c1.darker().darker().darker().darker().getRGB());
+
+        float endWidth = (float) Math.max(0.0, (width - 34.0F) * healthPercentage);
+        this.astolfoHealth.animate(endWidth, ASTOLFO_HEALTH_MS);
+        float healthWidth = this.astolfoHealth.getOutput();
+
+        RenderUtil.drawRect(x + 34.0F, y + barTop, x + 30.0F + healthWidth, y + barBottom,
+                c1.darker().darker().getRGB());
+        RenderUtil.drawRect(x + 34.0F, y + barTop,
+                x + 30.0F + Math.min(endWidth, healthWidth), y + barBottom,
+                c1.getRGB());
+        RenderUtil.disableRenderState();
+
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        GuiInventory.drawEntityOnScreen((int) x + 17, (int) (y + barBottom), ASTOLFO_MODEL_SCALE,
+                target.rotationYaw, target.rotationPitch, target);
+
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+        GlStateManager.disableDepth();
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        float textAlpha = Math.max(0.1F, alpha);
+        mc.fontRendererObj.drawStringWithShadow(target.getName(), x + 34.0F, y + ASTOLFO_NAME_Y,
+                applyOpacity(Color.WHITE, textAlpha).getRGB());
+
+        float healthX = Math.round(x + 34.0F);
+        float healthY = Math.round(y + healthTop);
+        boolean previousUnicode = mc.fontRendererObj.getUnicodeFlag();
+        if (this.astolfoSharpHealth.getValue()) {
+            mc.fontRendererObj.setUnicodeFlag(true);
+        }
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(healthScale, healthScale, healthScale);
+        mc.fontRendererObj.drawStringWithShadow(
+                astolfoHealthFormat.format((target.getHealth() + absorption) / 2.0F) + " \u2764",
+                healthX / healthScale, healthY / healthScale,
+                applyOpacity(first, textAlpha).getRGB());
+        GlStateManager.popMatrix();
+        mc.fontRendererObj.setUnicodeFlag(previousUnicode);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private static Color applyOpacity(Color color, float opacity) {
+        float clamped = Math.min(Math.max(opacity, 0.0F), 1.0F);
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(),
+                (int) (color.getAlpha() * clamped));
+    }
+
     private void renderRaven(ScaledResolution resolution, String name, float healthRatio,
                              int status, Color barColor) {
         String text = name;

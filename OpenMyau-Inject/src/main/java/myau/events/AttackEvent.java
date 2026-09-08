@@ -5,11 +5,21 @@ import net.minecraft.entity.Entity;
 
 public class AttackEvent implements Event {
     private final Entity target;
+    private final boolean fromController;
     private boolean cancelled;
 
     public AttackEvent(Entity target) {
+        this(target, false);
+    }
+
+    public AttackEvent(Entity target, boolean fromController) {
         this.target = target;
+        this.fromController = fromController;
         this.cancelled = false;
+    }
+
+    public boolean isFromController() {
+        return this.fromController;
     }
 
     public Entity getTarget() {

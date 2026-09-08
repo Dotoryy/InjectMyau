@@ -31,7 +31,7 @@ bool is64Bit(DWORD pid) {
     return !wow64;
 }
 
-bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log) {
+bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log, const Logger &debug) {
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION
                                          | PROCESS_VM_OPERATION | PROCESS_VM_WRITE
                                          | PROCESS_VM_READ,
@@ -41,6 +41,7 @@ bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log) {
         log(L"if the game runs elevated, run this the same way");
         return false;
     }
+    debug(format(L"opened process %lu, handle %p", pid, (void *)process));
     SIZE_T bytes = (dllPath.size() + 1) * sizeof(wchar_t);
     void *remote = VirtualAllocEx(process, nullptr, bytes, MEM_COMMIT | MEM_RESERVE,
                                   PAGE_READWRITE);
@@ -57,9 +58,11 @@ bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log) {
         CloseHandle(process);
         return false;
     }
+    debug(format(L"wrote dll path to remote %p (%zu bytes)", remote, (size_t)bytes));
     HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
     LPTHREAD_START_ROUTINE loadLibrary =
             (LPTHREAD_START_ROUTINE)GetProcAddress(kernel32, "LoadLibraryW");
+    debug(format(L"LoadLibraryW at %p", (void *)loadLibrary));
     HANDLE thread = CreateRemoteThread(process, nullptr, 0, loadLibrary, remote, 0, nullptr);
     if (!thread) {
         log(format(L"CreateRemoteThread failed (error %lu)", GetLastError()));
@@ -67,9 +70,11 @@ bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log) {
         CloseHandle(process);
         return false;
     }
+    debug(format(L"remote thread %p started, waiting", (void *)thread));
     WaitForSingleObject(thread, 15000);
     DWORD result = 0;
     GetExitCodeThread(thread, &result);
+    debug(format(L"LoadLibraryW returned module 0x%08lx in the target", result));
     CloseHandle(thread);
     VirtualFreeEx(process, remote, 0, MEM_RELEASE);
     CloseHandle(process);
@@ -81,11 +86,14 @@ bool inject(DWORD pid, const std::wstring &dllPath, const Logger &log) {
     }
     return true;
 }
-bool writeFile(const std::wstring &path, const void *bytes, size_t size, const Logger &log) {
+bool writeFile(const std::wstring &path, const void *bytes, size_t size, const Logger &log,
+               bool quiet = false) {
     HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        log(format(L"cannot write %s (error %lu)", path.c_str(), GetLastError()));
+        if (!quiet) {
+            log(format(L"cannot write %s (error %lu)", path.c_str(), GetLastError()));
+        }
         return false;
     }
     DWORD written = 0;
@@ -99,7 +107,8 @@ bool writeFile(const std::wstring &path, const void *bytes, size_t size, const L
 }
 bool stageForInjection(const void *dllBytes, size_t dllSize,
                        const void *jarBytes, size_t jarSize,
-                       DWORD pid, std::wstring &stagedDll, const Logger &log) {
+                       DWORD pid, std::wstring &stagedDll, std::wstring &stagedJarOut,
+                       const Logger &log, const Logger &debug) {
     wchar_t tempDir[MAX_PATH];
     if (!GetTempPathW(MAX_PATH, tempDir)) {
         return false;
@@ -117,16 +126,33 @@ bool stageForInjection(const void *dllBytes, size_t dllSize,
         } while (FindNextFileW(handle, &data));
         FindClose(handle);
     }
-    wchar_t suffix[32];
-    wsprintfW(suffix, L"%lu", pid);
-    stagedDll = base + L"myau_native_" + suffix + L".dll";
-    std::wstring stagedJar = base + L"myau_client_" + suffix + L".jar";
-    if (!writeFile(stagedDll, dllBytes, dllSize, log)) {
+    wchar_t suffix[64];
+    std::wstring stagedJar;
+    bool staged = false;
+    for (int attempt = 0; attempt < 32 && !staged; attempt++) {
+        if (attempt == 0) {
+            wsprintfW(suffix, L"%lu", pid);
+        } else {
+            wsprintfW(suffix, L"%lu_%d", pid, attempt);
+        }
+        stagedDll = base + L"myau_native_" + suffix + L".dll";
+        stagedJar = base + L"myau_client_" + suffix + L".jar";
+        bool last = attempt == 31;
+        bool jarOk = jarSize == 0 || writeFile(stagedJar, jarBytes, jarSize, log, !last);
+        if (writeFile(stagedDll, dllBytes, dllSize, log, !last) && jarOk) {
+            staged = true;
+        }
+    }
+    if (!staged) {
         return false;
     }
-    if (!writeFile(stagedJar, jarBytes, jarSize, log)) {
-        return false;
+    debug(format(L"staged dll: %s (%zu bytes)", stagedDll.c_str(), dllSize));
+    if (jarSize == 0) {
+        stagedJarOut.clear();
+        debug(L"jar is embedded in the dll -- nothing staged for it");
+        return true;
     }
+    stagedJarOut = stagedJar;
     int size = WideCharToMultiByte(CP_UTF8, 0, stagedJar.c_str(), (int)stagedJar.size(),
                                    nullptr, 0, nullptr, nullptr);
     std::string utf8(size, 0);
@@ -135,33 +161,44 @@ bool stageForInjection(const void *dllBytes, size_t dllSize,
     return writeFile(stagedDll + L".txt", utf8.data(), utf8.size(), log);
 }
 
-DWORD WINAPI cleanupThread(LPVOID raw) {
-    std::wstring *stagedDll = (std::wstring *)raw;
-    std::wstring sidecar = *stagedDll + L".txt";
-    std::wstring jar = *stagedDll;
-    size_t nameAt = jar.find_last_of(L'\\');
-    if (nameAt != std::wstring::npos) {
-        size_t pidAt = jar.find(L"myau_native_", nameAt);
-        if (pidAt != std::wstring::npos) {
-            std::wstring digits = jar.substr(pidAt + 12);
-            digits = digits.substr(0, digits.find(L'.'));
-            jar = jar.substr(0, nameAt + 1) + L"myau_client_" + digits + L".jar";
+void spawnReaper(DWORD pid, const std::wstring &dll, const std::wstring &txt,
+                 const std::wstring &jar, const std::wstring &embedded, const Logger &debug) {
+    std::wstring files;
+    for (const std::wstring &path : {dll, txt, jar, embedded}) {
+        if (!path.empty()) {
+            if (!files.empty()) {
+                files += L",";
+            }
+            files += L"'" + path + L"'";
         }
     }
-    Sleep(3000);
-    DeleteFileW(sidecar.c_str());
-    for (int attempt = 0; attempt < 30; attempt++) {
-        bool dllGone = DeleteFileW(stagedDll->c_str())
-                || GetLastError() == ERROR_FILE_NOT_FOUND;
-        bool jarGone = DeleteFileW(jar.c_str())
-                || GetLastError() == ERROR_FILE_NOT_FOUND;
-        if (dllGone && jarGone) {
-            break;
-        }
-        Sleep(1000);
+    if (files.empty()) {
+        return;
     }
-    delete stagedDll;
-    return 0;
+    wchar_t pidText[16];
+    wsprintfW(pidText, L"%lu", pid);
+    std::wstring script =
+            L"Wait-Process -Id " + std::wstring(pidText) + L" -ErrorAction SilentlyContinue; "
+            L"$f=@(" + files + L"); "
+            L"for($i=0;$i -lt 30;$i++){"
+            L"Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; "
+            L"if(-not (Test-Path -LiteralPath '" + dll + L"')){break}; "
+            L"Start-Sleep -Seconds 1}";
+    std::wstring command =
+            L"powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command \""
+            + script + L"\"";
+    std::vector<wchar_t> buffer(command.begin(), command.end());
+    buffer.push_back(L'\0');
+    STARTUPINFOW si = {sizeof(si)};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, buffer.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                       nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        debug(format(L"detached cleanup waiting on pid %lu", pid));
+    }
 }
 }
 bool findTarget(DWORD &pid, std::wstring &launcher) {
@@ -188,7 +225,7 @@ bool findTarget(DWORD &pid, std::wstring &launcher) {
 }
 bool runInjection(const void *dllBytes, size_t dllSize,
                   const void *jarBytes, size_t jarSize,
-                  DWORD explicitPid, const Logger &log) {
+                  DWORD explicitPid, const Logger &log, const Logger &debug) {
     DWORD pid = explicitPid;
     if (pid == 0) {
         std::vector<Candidate> all = findCandidates();
@@ -226,22 +263,33 @@ bool runInjection(const void *dllBytes, size_t dllSize,
         pid = best->pid;
         log(format(L"chosen: %lu (score %d)", pid, best->score));
     }
+    debug(format(L"payload: %zu bytes of dll, jar %s", dllSize,
+                 jarSize == 0 ? L"embedded" : L"separate"));
+    debug(format(L"checking architecture of pid %lu", pid));
     if (!is64Bit(pid)) {
         log(format(L"process %lu is 32-bit and this DLL is x64 -- they cannot mix.", pid));
         return false;
     }
+    debug(L"target is 64-bit, staging payload");
     std::wstring staged;
-    if (!stageForInjection(dllBytes, dllSize, jarBytes, jarSize, pid, staged, log)) {
+    std::wstring stagedJar;
+    if (!stageForInjection(dllBytes, dllSize, jarBytes, jarSize, pid, staged, stagedJar,
+                           log, debug)) {
         return false;
     }
     log(format(L"injecting into %lu", pid));
-    if (!inject(pid, staged, log)) {
+    if (!inject(pid, staged, log, debug)) {
         return false;
     }
-    HANDLE cleanup = CreateThread(nullptr, 0, cleanupThread, new std::wstring(staged), 0, nullptr);
-    if (cleanup) {
-        CloseHandle(cleanup);
+    wchar_t tempDir[MAX_PATH];
+    std::wstring embeddedJar;
+    if (GetTempPathW(MAX_PATH, tempDir)) {
+        wchar_t name[64];
+        wsprintfW(name, L"myau_client_%lu.jar", pid);
+        embeddedJar = std::wstring(tempDir) + name;
     }
+    spawnReaper(pid, staged, staged + L".txt", stagedJar, embeddedJar, debug);
+    debug(L"cleanup waits for the game to exit, then removes the temp files");
     log(L"loaded -- details in %TEMP%\\myau-native.log");
     return true;
 }

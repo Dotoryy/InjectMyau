@@ -6,6 +6,7 @@ import myau.events.AttackEvent;
 import myau.events.CancelUseEvent;
 import myau.events.SwapItemEvent;
 import myau.events.WindowClickEvent;
+import myau.module.modules.KeepSprint;
 import myau.module.modules.NickHider;
 import myau.module.modules.Scaffold;
 import myau.module.modules.Sprint;
@@ -22,18 +23,27 @@ public final class PlayerCallbacks {
     private PlayerCallbacks() {
     }
 
-    private static Entity attackTarget;
-
-    public static void attackEntityPre(Object target) {
-        attackTarget = (Entity) target;
-    }
-    public static void attackEntity() {
+    public static boolean attackEntity(Object target) {
         try {
-            if (attackTarget != null) {
-                EventManager.call(new AttackEvent(attackTarget));
+            if (!(target instanceof Entity)) {
+                return false;
             }
+            AttackEvent event = new AttackEvent((Entity) target, true);
+            EventManager.call(event);
+            if (event.isCancelled()) {
+                return true;
+            }
+            if (Myau.moduleManager != null) {
+                KeepSprint keepSprint =
+                        (KeepSprint) Myau.moduleManager.modules.get(KeepSprint.class);
+                if (keepSprint != null) {
+                    keepSprint.confirmAttack();
+                }
+            }
+            return false;
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);
+            return false;
         }
     }
 

@@ -69,7 +69,9 @@ public class HUD extends Module {
     public final BooleanProperty shadow = new BooleanProperty("shadow", true);
     public final ModeProperty arraylistFont = new ModeProperty("arraylist-font", 0,
             new String[]{"VANILLA", "SF-BOLD", "SF-REGULAR", "SF-UI", "PRODUCT-SANS",
-                    "MSDF-SF", "MSDF-SF-BOLD", "MSDF-PRODUCT-SANS"});
+                    "MSDF-SF", "MSDF-SF-BOLD", "MSDF-PRODUCT-SANS",
+                    "MSDF-GOOGLE-SANS", "MSDF-GOOGLE-SANS-BOLD", "MSDF-TAHOMA",
+                    "MSDF-TAHOMA-BOLD", "MSDF-VERDANA"});
     public final BooleanProperty suffixes = new BooleanProperty("suffixes", true);
     public final BooleanProperty lowerCase = new BooleanProperty("lower-case", false);
     public final BooleanProperty removeSpaces = new BooleanProperty("remove-spaces", false);
@@ -125,6 +127,17 @@ public class HUD extends Module {
     }
     public Color getColor(long time) {
         return this.getColor(time, 0L);
+    }
+    public Color getStaticColor() {
+        int mode = this.colorMode.getValue();
+        if (mode == COLOR_THEME) {
+            Theme theme = (Theme) Myau.moduleManager.modules.get(Theme.class);
+            return theme == null ? Color.WHITE : theme.getTheme().getPrimary();
+        }
+        if (mode == 3 || mode == 4 || mode == 5) {
+            return new Color(this.custom1.getValue());
+        }
+        return this.getColor(0L);
     }
     public Color getColor(long time, long offset) {
         if (this.colorMode.getValue() == COLOR_THEME) {

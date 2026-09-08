@@ -119,6 +119,8 @@ public class BedDefender extends Module {
     public final IntProperty delayAfterAim = new IntProperty("delay-after-aim", 0, 0, 10);
     public final IntProperty sneakHoldTicks = new IntProperty("sneak-hold-ticks", 5, 0, 20);
     public final IntProperty fov = new IntProperty("fov", 180, 0, 180);
+    public final ModeProperty moveFix =
+            new ModeProperty("move-fix", 1, new String[]{"NONE", "SILENT"});
 
     private List<Step> steps = Collections.emptyList();
     private int stepIndex;
@@ -190,6 +192,8 @@ public class BedDefender extends Module {
         float[] rotation = this.plan();
         if (rotation != null) {
             event.setRotation(rotation[0], rotation[1], ROTATION_PRIORITY);
+            event.setPervRotation(this.moveFix.getValue() != 0
+                    ? rotation[0] : mc.thePlayer.rotationYaw, ROTATION_PRIORITY);
         }
     }
 

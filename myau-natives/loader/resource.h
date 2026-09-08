@@ -1,8 +1,7 @@
 #pragma once
 
-#define IDR_NATIVE_DLL 101
-#define IDR_CLIENT_JAR 102
-#define IDR_LOGO       103
+#define IDR_LOGO 103
+#define IDR_FONT 104
 
 #define IDI_APP 1
 

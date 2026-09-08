@@ -2,6 +2,7 @@ package myau.mixin;
 
 import myau.Myau;
 import myau.event.EventManager;
+import myau.events.MoveEvent;
 import myau.events.StrafeEvent;
 import myau.management.RotationState;
 import myau.module.modules.Jesus;
@@ -56,6 +57,24 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
         } else {
             entityLivingBase.moveFlying(float2, float3, float4);
         }
+    }
+
+    @Redirect(
+            method = {"moveEntityWithHeading"},
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/entity/EntityLivingBase;moveEntity(DDD)V"
+            )
+    )
+    private void moveEntity(EntityLivingBase entityLivingBase, double double2, double double4,
+                            double double6) {
+        if (!((Entity) ((Object) this) instanceof EntityPlayerSP)) {
+            entityLivingBase.moveEntity(double2, double4, double6);
+            return;
+        }
+        MoveEvent event = new MoveEvent(double2, double4, double6);
+        EventManager.call(event);
+        entityLivingBase.moveEntity(event.getPosX(), event.getPosY(), event.getPosZ());
     }
 
     @ModifyVariable(
