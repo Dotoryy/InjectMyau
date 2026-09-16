@@ -23,7 +23,6 @@ import myau.ui.clickgui.ClickGui;
 import myau.util.KeyBindUtil;
 import myau.util.MoveUtil;
 import myau.util.PacketUtil;
-import myau.util.PlayerUtil;
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiChat;
@@ -39,11 +38,7 @@ import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.client.C0BPacketEntityAction;
 import net.minecraft.network.play.client.C0DPacketCloseWindow;
-import net.minecraft.network.play.client.C00PacketKeepAlive;
 import net.minecraft.network.play.client.C0EPacketClickWindow;
-import net.minecraft.network.play.client.C0FPacketConfirmTransaction;
-import net.minecraft.network.play.server.S01PacketJoinGame;
-import net.minecraft.network.play.server.S08PacketPlayerPosLook;
 import net.minecraft.network.play.client.C16PacketClientStatus;
 import net.minecraft.potion.Potion;
 import net.minecraft.util.BlockPos;
@@ -63,17 +58,12 @@ public class InventoryMove extends Module {
     private static final int MODE_GRIM = 3;
     private static final int MODE_GRIM_2 = 4;
     private static final int MODE_WATCHDOG = 5;
-    private static final int MODE_WATCHDOG_2 = 6;
-    private static final int MODE_WATCHDOG_3 = 7;
-    private static final int CLICK_MODE_QUICK_MOVE = 1;
-    private static final int CLICK_MODE_SWAP = 2;
-    private static final int CLICK_MODE_THROW = 4;
+    private static final int MODE_WATCHDOG_3 = 6;
     private static final int WATCHDOG_3_STOP_TICKS = 10;
-    private static final int BLINK_QUEUE_LIMIT = 100;
 
     public final ModeProperty mode = new ModeProperty("mode", MODE_NORMAL,
             new String[]{"Normal", "Buffer Abuse", "Cancel", "Grim", "Grim 2", "Watchdog",
-                    "Watchdog 2", "Watchdog 3"});
+                    "Watchdog 3"});
 
     public final IntProperty clicks = new IntProperty("clicks", 3, 2, 10,
             () -> this.mode.getValue() == MODE_BUFFER_ABUSE);
@@ -117,8 +107,6 @@ public class InventoryMove extends Module {
 
     private boolean sentWindowPacket = false;
 
-    private final java.util.ArrayDeque<Packet<?>> blinkQueue = new java.util.ArrayDeque<Packet<?>>();
-    private boolean shouldBlink = false;
     private boolean stopMovement = false;
     private int ticksSinceClick = 0;
 
@@ -168,8 +156,6 @@ public class InventoryMove extends Module {
         this.queuedPackets.clear();
         this.everMoved.clear();
         this.resetOpenMeasurement();
-        this.blinkQueue.clear();
-        this.shouldBlink = false;
         this.stopMovement = false;
         this.ticksSinceClick = 0;
     }
@@ -186,10 +172,6 @@ public class InventoryMove extends Module {
         }
         if (this.mode.getValue() == MODE_WATCHDOG) {
             this.trackMovedEntities();
-            return;
-        }
-        if (this.mode.getValue() == MODE_WATCHDOG_2) {
-            this.watchdog2Tick();
             return;
         }
         if (this.mode.getValue() == MODE_WATCHDOG_3) {
@@ -271,8 +253,7 @@ public class InventoryMove extends Module {
 
     private boolean isWatchdogFamily() {
         int selected = this.mode.getValue();
-        return selected == MODE_WATCHDOG || selected == MODE_WATCHDOG_2
-                || selected == MODE_WATCHDOG_3;
+        return selected == MODE_WATCHDOG || selected == MODE_WATCHDOG_3;
     }
 
     private boolean screenAllowed() {
@@ -339,9 +320,6 @@ public class InventoryMove extends Module {
                 break;
             case MODE_WATCHDOG:
                 this.watchdogPacket(event, packet);
-                break;
-            case MODE_WATCHDOG_2:
-                this.watchdog2Packet(event, packet);
                 break;
             case MODE_WATCHDOG_3:
                 if (event.getType() == EventType.SEND
@@ -525,73 +503,9 @@ public class InventoryMove extends Module {
     }
 
 
-    private boolean killAuraBusy() {
-        KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
-        return killAura != null && killAura.isEnabled() && killAura.getTarget() != null;
-    }
-
     private void resetWatchdogExtras() {
-        this.flushBlinkQueue();
-        this.shouldBlink = false;
         this.stopMovement = false;
         this.ticksSinceClick = 0;
-    }
-
-    private void flushBlinkQueue() {
-        while (!this.blinkQueue.isEmpty()) {
-            Packet<?> queued = this.blinkQueue.pollFirst();
-            if (queued != null) {
-                PacketUtil.sendPacketNoEvent(queued);
-            }
-        }
-    }
-
-    private void watchdog2Packet(PacketEvent event, Packet<?> packet) {
-        if (mc.thePlayer == null || mc.theWorld == null || PlayerUtil.isUsingItem()
-                || this.killAuraBusy()) {
-            return;
-        }
-        if (packet instanceof C0EPacketClickWindow) {
-            C0EPacketClickWindow click = (C0EPacketClickWindow) packet;
-            int clickMode = click.getMode();
-            boolean allowed = clickMode == CLICK_MODE_QUICK_MOVE || clickMode == CLICK_MODE_SWAP
-                    || clickMode == CLICK_MODE_THROW;
-            if (click.getWindowId() == mc.thePlayer.inventoryContainer.windowId && allowed) {
-                PacketUtil.sendPacketNoEvent(new C0DPacketCloseWindow(click.getWindowId()));
-            } else {
-                this.shouldBlink = true;
-            }
-        } else if (packet instanceof C0DPacketCloseWindow) {
-            this.shouldBlink = false;
-        } else if (packet instanceof S01PacketJoinGame
-                || packet instanceof S08PacketPlayerPosLook) {
-            this.blinkQueue.clear();
-            this.shouldBlink = false;
-        } else if (this.shouldBlink && event.getType() == EventType.SEND
-                && !(packet instanceof C00PacketKeepAlive)
-                && !(packet instanceof C0FPacketConfirmTransaction)) {
-            this.blinkQueue.add(packet);
-            event.setCancelled(true);
-            if (this.blinkQueue.size() >= BLINK_QUEUE_LIMIT) {
-                this.shouldBlink = false;
-                this.flushBlinkQueue();
-            }
-        }
-        if (mc.currentScreen == null) {
-            this.shouldBlink = false;
-            this.flushBlinkQueue();
-        }
-    }
-
-    private void watchdog2Tick() {
-        if (mc.thePlayer == null || PlayerUtil.isUsingItem() || !this.screenAllowed()
-                || this.killAuraBusy()) {
-            return;
-        }
-        if (mc.currentScreen == null || !this.screenAllowsMovement()) {
-            return;
-        }
-        this.updateMovementKeyStates();
     }
 
     private void watchdog3Tick() {

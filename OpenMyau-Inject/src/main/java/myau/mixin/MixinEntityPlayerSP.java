@@ -8,7 +8,9 @@ import myau.events.SprintEvent;
 import myau.events.MoveInputEvent;
 import myau.events.PlayerUpdateEvent;
 import myau.events.UpdateEvent;
+import myau.management.LateRotation;
 import myau.management.RotationState;
+import myau.module.modules.Freecam;
 import myau.module.modules.AntiDebuff;
 import myau.module.modules.NoSlow;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -44,6 +46,9 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
     public float renderArmYaw;
     @Shadow
     public float prevRenderArmYaw;
+
+    @Shadow
+    protected abstract boolean isCurrentViewEntity();
 
     @Inject(
             method = {"onUpdate"},
@@ -96,6 +101,20 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
             )
     )
     private boolean onRidding(EntityPlayerSP entityPlayerSP) {
+        float lateBodyYaw = LateRotation.consumeBodyYaw(entityPlayerSP.ticksExisted);
+        if (!Float.isNaN(lateBodyYaw)) {
+            entityPlayerSP.renderYawOffset = RotationState.bodyYawToward(lateBodyYaw, entityPlayerSP.prevRenderYawOffset);
+            entityPlayerSP.rotationYawHead = lateBodyYaw;
+        }
+        float lateYaw = LateRotation.consumeYaw(entityPlayerSP.ticksExisted);
+        if (!Float.isNaN(lateYaw) && Float.isNaN(this.overrideYaw)) {
+            this.pendingYaw = this.rotationYaw;
+            this.pendingPitch = this.rotationPitch;
+            this.overrideYaw = lateYaw;
+            this.overridePitch = this.rotationPitch;
+            entityPlayerSP.rotationYawHead = lateYaw;
+            LateRotation.scheduleBodyYaw(lateYaw, entityPlayerSP.ticksExisted + 1);
+        }
         if (!Float.isNaN(this.overrideYaw) && !Float.isNaN(this.overridePitch)) {
             this.rotationYaw = this.overrideYaw;
             this.rotationPitch = this.overridePitch;
@@ -124,6 +143,17 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
     private void onLivingUpdate(CallbackInfo callbackInfo) {
         EventManager.call(new LivingUpdateEvent());
         EventManager.call(new SprintEvent());
+    }
+
+    @Redirect(
+            method = {"onUpdateWalkingPlayer"},
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/entity/EntityPlayerSP;isCurrentViewEntity()Z"
+            )
+    )
+    private boolean motionViewEntity(EntityPlayerSP entityPlayerSP) {
+        return this.isCurrentViewEntity() || Freecam.freeEntity != null;
     }
 
     @Inject(

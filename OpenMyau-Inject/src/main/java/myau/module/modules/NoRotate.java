@@ -30,7 +30,7 @@ public class NoRotate extends Module {
     }
     @Override
     public String[] getSuffix() {
-        return new String[]{"Edit"};
+        return new String[]{"Tick"};
     }
     @EventTarget
     public void onPacket(PacketEvent event) {

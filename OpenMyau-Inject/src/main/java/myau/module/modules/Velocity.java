@@ -15,6 +15,7 @@ import myau.property.properties.PercentProperty;
 import myau.util.ChatUtil;
 import myau.util.KeyBindUtil;
 import myau.util.MoveUtil;
+import myau.util.MovementTicks;
 import myau.util.RotationUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
@@ -30,6 +31,9 @@ public class Velocity extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private static final int MODE_JUMP = 1;
     private static final int MODE_WATCHDOG = 5;
+    private static final int MODE_MATRIX = 6;
+    private static final double MATRIX_REVERSE_FACTOR = -0.1;
+    private static final double MATRIX_MOTION_Y_STEP = 0.00348;
     private static final long MW_GROUND_TIMEOUT_MS = 1000L;
     private static final double FALL_IGNORE_DISTANCE = 3.0;
     private static final float JUMP_FOV = 330.0F;
@@ -60,7 +64,7 @@ public class Velocity extends Module {
     private long mwDelayStart = 0L;
 
     public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"VANILLA", "JUMP", "DELAY", "REVERSE", "LEGIT_TEST",
-            "WATCHDOG"});
+            "WATCHDOG", "MATRIX"});
     public final IntProperty delayTicks = new IntProperty("delay-ticks", 3, 1, 20, () -> this.mode.getValue() == 2);
     public final IntProperty mwDelayTicks = new IntProperty("mw-delay-ticks", 1, 0, 100,
             () -> this.mode.getValue() == MODE_WATCHDOG);
@@ -244,6 +248,10 @@ public class Velocity extends Module {
         if (killAura == null || !killAura.isEnabled()) {
             return;
         }
+        NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
+        if (noSlow != null && noSlow.isWatchdogReleaseTick()) {
+            return;
+        }
         net.minecraft.entity.EntityLivingBase target = killAura.getTarget();
         if (target == null || target.isDead || target == mc.thePlayer) {
             return;
@@ -368,6 +376,9 @@ public class Velocity extends Module {
         } else if (this.mode.getValue() == MODE_JUMP) {
             this.pendingExplosion = false;
             this.allowNext = true;
+        } else if (this.mode.getValue() == MODE_MATRIX) {
+            this.pendingExplosion = false;
+            this.allowNext = true;
         } else if (!this.allowNext || !(Boolean) this.fakeCheck.getValue()) {
             this.allowNext = true;
             if (this.pendingExplosion) {
@@ -423,7 +434,7 @@ public class Velocity extends Module {
                 this.delayActive = false;
             }
 
-            if (this.mode.getValue() == 4) {
+            if (this.isEnabled() && this.mode.getValue() == 4) {
                 int hurtTime = mc.thePlayer.hurtTime;
 
                 if (hurtTime >= 8) {
@@ -525,6 +536,13 @@ public class Velocity extends Module {
             if (event.getPacket() instanceof S12PacketEntityVelocity) {
                 S12PacketEntityVelocity packet = (S12PacketEntityVelocity) event.getPacket();
                 if (packet.getEntityID() == mc.thePlayer.getEntityId()) {
+                    if (this.mode.getValue() == MODE_MATRIX) {
+                        mc.thePlayer.motionY = (double) packet.getMotionY() / 8000.0;
+                        if (!this.isSpeedActive() && MoveUtil.isMoving()) {
+                            event.setCancelled(true);
+                        }
+                        return;
+                    }
                     LongJump longJump = (LongJump) Myau.moduleManager.modules.get(LongJump.class);
                     if (this.mode.getValue() == 2
                             && !this.reverseFlag
@@ -587,6 +605,36 @@ public class Velocity extends Module {
         }
     }
 
+    private boolean isSpeedActive() {
+        Speed speed = (Speed) Myau.moduleManager.modules.get(Speed.class);
+        return speed != null && speed.isEnabled();
+    }
+
+    private boolean isFlyActive() {
+        Fly fly = (Fly) Myau.moduleManager.modules.get(Fly.class);
+        return fly != null && fly.isEnabled();
+    }
+
+    @EventTarget
+    public void onMatrixStrafe(StrafeEvent event) {
+        if (!this.isEnabled() || this.mode.getValue() != MODE_MATRIX || mc.thePlayer == null) {
+            return;
+        }
+        int since = MovementTicks.sinceVelocity();
+        boolean speed = this.isSpeedActive();
+        if (!MoveUtil.isMoving() && since == 1) {
+            mc.thePlayer.motionX *= MATRIX_REVERSE_FACTOR;
+            mc.thePlayer.motionZ *= MATRIX_REVERSE_FACTOR;
+        } else if (since == 1 && !speed) {
+            MoveUtil.strafe();
+        }
+        if (since < 6 && speed) {
+            MoveUtil.strafe();
+        } else if (since > 1 && !speed && since < 15 && !this.isFlyActive()) {
+            mc.thePlayer.motionY -= MATRIX_MOTION_Y_STEP;
+        }
+    }
+
     @EventTarget
     public void onLoadWorld(LoadWorldEvent event) {
         this.onDisabled();
@@ -598,6 +646,8 @@ public class Velocity extends Module {
         this.allowNext = true;
         this.shouldJump = false;
         this.jumpCooldown = 0;
+        this.jumpFlag = false;
+        this.delayActive = false;
     }
 
     @Override

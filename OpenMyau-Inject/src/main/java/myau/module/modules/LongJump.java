@@ -13,10 +13,13 @@ import myau.property.properties.FloatProperty;
 import myau.property.properties.PercentProperty;
 import myau.property.properties.ModeProperty;
 import net.minecraft.client.Minecraft;
+import net.minecraft.entity.Entity;
 import net.minecraft.item.ItemFireball;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.server.S08PacketPlayerPosLook;
+import myau.property.properties.BooleanProperty;
 
 public class LongJump extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -28,7 +31,18 @@ public class LongJump extends Module {
     private boolean readyToUseFireball = false;
     private boolean fireballLaunched = false;
     private int savedHotbarSlot = -1;
-    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"FIREBALL", "FIREBALL_MANUAL", "FIREBALL_HIGH", "FIREBALL_FLAT"});
+    private static final int MODE_MATRIX2 = 4;
+    private static final double MATRIX_MOTION_Y_STEP = 0.00348;
+    private static final double MATRIX_JUMP_MOTION = 0.42;
+    private static final double MATRIX_FALL_STRAFE = 1.97;
+    private static final float MATRIX_FALL_TRIGGER = 0.1F;
+    private boolean matrixStarted = false;
+    private boolean hadViewBobbing = false;
+    private double startX = 0.0;
+    private double startY = 0.0;
+    private double startZ = 0.0;
+    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"FIREBALL", "FIREBALL_MANUAL", "FIREBALL_HIGH", "FIREBALL_FLAT", "MATRIX2"});
+    public final BooleanProperty silent = new BooleanProperty("silent", false, () -> this.mode.getValue() == MODE_MATRIX2);
     public final FloatProperty motion = new FloatProperty("motion", 1.0F, 1.0F, 20.0F);
     public final FloatProperty speedMotion = new FloatProperty("speed-motion", 1.0F, 1.0F, 20.0F);
     public final PercentProperty strafe = new PercentProperty("strafe", 0);
@@ -67,6 +81,10 @@ public class LongJump extends Module {
 
     public boolean isLongJumpMode() {
         return this.isAutoMode() || this.isManualMode();
+    }
+
+    private boolean isMatrix() {
+        return this.isEnabled() && this.mode.getValue() == MODE_MATRIX2 && mc.thePlayer != null;
     }
 
     public boolean canStartJump() {
@@ -180,7 +198,49 @@ public class LongJump extends Module {
     }
 
     @EventTarget
+    public void onMoveInput(MoveInputEvent event) {
+        if (!this.isMatrix() || mc.thePlayer.movementInput == null) {
+            return;
+        }
+        if (!MoveUtil.isMoving()) {
+            mc.thePlayer.movementInput.moveForward = 1.0F;
+        }
+    }
+
+    @EventTarget
+    public void onRender3D(Render3DEvent event) {
+        if (!this.isMatrix() || !this.silent.getValue()) {
+            return;
+        }
+        Entity view = mc.getRenderViewEntity();
+        if (view == null) {
+            return;
+        }
+        mc.gameSettings.viewBobbing = false;
+        view.posX = this.startX;
+        view.posY = this.startY;
+        view.posZ = this.startZ;
+        view.prevPosX = this.startX;
+        view.prevPosY = this.startY;
+        view.prevPosZ = this.startZ;
+    }
+
+    @EventTarget
     public void onStrafe(StrafeEvent event) {
+        if (this.isMatrix()) {
+            if (mc.thePlayer.onGround) {
+                mc.thePlayer.jump();
+            }
+            this.matrixStarted = true;
+            if (MovementTicks.sinceVelocity() > 1) {
+                mc.thePlayer.motionY += MATRIX_MOTION_Y_STEP;
+            }
+            if (this.matrixStarted && mc.thePlayer.fallDistance > MATRIX_FALL_TRIGGER) {
+                mc.thePlayer.motionY = MATRIX_JUMP_MOTION;
+                MoveUtil.strafe(MATRIX_FALL_STRAFE);
+            }
+            return;
+        }
         if (this.isEnabled()) {
             if (this.isLongJumpMode()
                     && this.isJumping
@@ -211,6 +271,17 @@ public class LongJump extends Module {
     public void onPacket(PacketEvent event) {
         if (event.getType() == EventType.RECEIVE && !event.isCancelled()) {
             if (event.getPacket() instanceof S08PacketPlayerPosLook) {
+                if (this.isMatrix()) {
+                    S08PacketPlayerPosLook packet = (S08PacketPlayerPosLook) event.getPacket();
+                    event.setCancelled(true);
+                    PacketUtil.sendPacketNoEvent(new C03PacketPlayer.C06PacketPlayerPosLook(
+                            packet.getX(), packet.getY(), packet.getZ(),
+                            mc.thePlayer.rotationYaw, mc.thePlayer.rotationPitch, false));
+                    mc.thePlayer.setPosition(packet.getX(), packet.getY(), packet.getZ());
+                    mc.thePlayer.jump();
+                    this.setEnabled(false);
+                    return;
+                }
                 this.isJumping = false;
                 this.tickCounter = 0;
                 this.jumpModeStage = 0;
@@ -223,6 +294,13 @@ public class LongJump extends Module {
 
     @Override
     public void onEnabled() {
+        this.matrixStarted = false;
+        if (this.mode.getValue() == MODE_MATRIX2 && mc.thePlayer != null) {
+            this.hadViewBobbing = mc.gameSettings.viewBobbing;
+            this.startX = mc.thePlayer.posX;
+            this.startY = mc.thePlayer.posY;
+            this.startZ = mc.thePlayer.posZ;
+        }
         this.jumpTimer.reset();
         if (this.isAutoMode() && this.findFireballInHotbar() == -1) {
             this.setEnabled(false);
@@ -232,6 +310,11 @@ public class LongJump extends Module {
 
     @Override
     public void onDisabled() {
+        this.matrixStarted = false;
+        if (this.hadViewBobbing) {
+            mc.gameSettings.viewBobbing = true;
+            this.hadViewBobbing = false;
+        }
         this.isJumping = false;
         this.tickCounter = 0;
         this.jumpModeStage = 0;

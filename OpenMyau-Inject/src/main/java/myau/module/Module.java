@@ -77,8 +77,11 @@ public abstract class Module {
         return this.key;
     }
 
+    private static final int LEGACY_MOUSE_BASE = 1000;
+    private static final int MOUSE_BASE = -100;
+
     public void setKey(int integer) {
-        this.key = integer;
+        this.key = integer >= LEGACY_MOUSE_BASE ? integer - LEGACY_MOUSE_BASE + MOUSE_BASE : integer;
     }
 
     public boolean isHidden() {

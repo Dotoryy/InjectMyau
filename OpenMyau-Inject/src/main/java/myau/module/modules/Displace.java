@@ -186,7 +186,7 @@ public class Displace extends Module {
 
     @EventTarget
     public void onUpdate(UpdateEvent event) {
-        if (event.getType() != EventType.PRE) {
+        if (event.getType() != EventType.PRE || !this.isEnabled()) {
             return;
         }
         if (mc.thePlayer == null || mc.theWorld == null) {
@@ -955,7 +955,7 @@ public class Displace extends Module {
                         >= this.maxBlinkHold.getValue()) {
             this.releaseBlink();
         }
-        if (this.isOverrideAttackEnabled()) {
+        if (this.isEnabled() && this.isOverrideAttackEnabled()) {
             this.advanceOverrideAttackState();
         } else if (this.overrideAttackState != OverrideAttackState.IDLE) {
             this.resetOverrideAttackState();

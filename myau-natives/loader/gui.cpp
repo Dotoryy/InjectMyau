@@ -82,7 +82,13 @@ constexpr int SIZE_CONSOLE = 13;
 
 constexpr double DOWNLOAD_SHARE = 0.9;
 
+#ifdef MYAU_LOCAL_LOADER
+const wchar_t TITLE[] = L"Myau Injector (Local)";
+#define MYAU_WIDEN_INNER(text) L##text
+#define MYAU_WIDEN(text) MYAU_WIDEN_INNER(text)
+#else
 const wchar_t TITLE[] = L"Myau Injector";
+#endif
 const wchar_t LINK[] = L"https://github.com/Dotoryy/InjectMyau";
 
 const wchar_t *const CHANGELOG_FALLBACK[] = {
@@ -991,15 +997,47 @@ void refreshTarget() {
     RECT box = buttonRect();
     InvalidateRect(g_window, &box, FALSE);
 }
+#ifdef MYAU_LOCAL_LOADER
+bool loadLocalPayload(std::vector<BYTE> &library) {
+    const wchar_t *name = g_channel == 1 ? L"myau_native_beta.dll" : L"myau_native.dll";
+    std::wstring path = std::wstring(MYAU_WIDEN(MYAU_LOCAL_DIR)) + L"/" + name;
+    postDebug(format(L"local payload: %s", path.c_str()));
+    WIN32_FILE_ATTRIBUTE_DATA info = {};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info)) {
+        postLine(format(L"%s not found -- run %s first", name,
+                        g_channel == 1 ? L"buildBeta" : L"buildLatest or buildDll"));
+        return false;
+    }
+    if (!readFileBytes(path, library)) {
+        postLine(format(L"could not read %s", name));
+        return false;
+    }
+    FILETIME localTime = {};
+    SYSTEMTIME stamp = {};
+    FileTimeToLocalFileTime(&info.ftLastWriteTime, &localTime);
+    FileTimeToSystemTime(&localTime, &stamp);
+    postLine(format(L"local %s  %.1f MB  built %04u-%02u-%02u %02u:%02u:%02u", name,
+                    library.size() / 1048576.0, stamp.wYear, stamp.wMonth, stamp.wDay,
+                    stamp.wHour, stamp.wMinute, stamp.wSecond));
+    return true;
+}
+#endif
 DWORD WINAPI injectThread(LPVOID) {
-    std::wstring url = payloadUrl();
     std::vector<BYTE> library;
     std::wstring error;
+    bool newVersion = false;
     postProgress(0.0);
     postDebug(L"advanced logging on");
     postDebug(g_channel == 1 ? L"channel: Beta" : L"channel: Latest");
-    postDebug(format(L"payload url: %s", url.substr(0, 78).c_str()));
     postDebug(format(L"target: pid %lu (%s)", g_targetPid, g_targetLauncher.c_str()));
+#ifdef MYAU_LOCAL_LOADER
+    if (!loadLocalPayload(library)) {
+        PostMessageW(g_window, WM_INJECT_DONE, FALSE, 0);
+        return 0;
+    }
+#else
+    std::wstring url = payloadUrl();
+    postDebug(format(L"payload url: %s", url.substr(0, 78).c_str()));
 
     std::wstring cachePath = cacheDllPath();
     std::vector<BYTE> cached;
@@ -1012,7 +1050,6 @@ DWORD WINAPI injectThread(LPVOID) {
     postLine(L"connecting...");
 
     int lastPercent = -1;
-    bool newVersion = false;
     FetchStatus status = downloadWithCache(
             url, library, etag, lastModified,
             [&lastPercent](unsigned long long done, unsigned long long total) {
@@ -1067,6 +1104,7 @@ DWORD WINAPI injectThread(LPVOID) {
             return 0;
         }
     }
+#endif
     if (library.size() < 2 || library[0] != 'M' || library[1] != 'Z') {
         postLine(L"what came back is not a Windows library -- check the download address");
         PostMessageW(g_window, WM_INJECT_DONE, FALSE, 0);
@@ -1499,7 +1537,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     RegisterClassExW(&cls);
     RECT wanted = {0, 0, WINDOW_WIDTH, WINDOW_HEIGHT};
     AdjustWindowRect(&wanted, WS_POPUP, FALSE);
-    g_window = CreateWindowExW(WS_EX_APPWINDOW, cls.lpszClassName, L"Myau Injector", WS_POPUP,
+    g_window = CreateWindowExW(WS_EX_APPWINDOW, cls.lpszClassName, TITLE, WS_POPUP,
                                CW_USEDEFAULT, CW_USEDEFAULT,
                                wanted.right - wanted.left, wanted.bottom - wanted.top,
                                nullptr, nullptr, instance, nullptr);

@@ -4,6 +4,7 @@ import myau.Myau;
 import myau.event.EventManager;
 import myau.events.KnockbackEvent;
 import myau.events.SafeWalkEvent;
+import myau.module.modules.Freecam;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.entity.Entity;
 import net.minecraft.world.World;
@@ -72,8 +73,18 @@ public abstract class MixinEntity {
             at = {@At("HEAD")},
             cancellable = true
     )
-    private void setAngles(CallbackInfo callbackInfo) {
-        if ((Entity) ((Object) this) instanceof EntityPlayerSP && Myau.rotationManager != null && Myau.rotationManager.isRotated()) {
+    private void setAngles(float yaw, float pitch, CallbackInfo callbackInfo) {
+        if (!((Entity) ((Object) this) instanceof EntityPlayerSP)) {
+            return;
+        }
+        if (Freecam.freeEntity != null) {
+            Freecam.freeEntity.setAngles(yaw, pitch);
+            Freecam.freeEntity.rotationYawHead = Freecam.freeEntity.rotationYaw;
+            Freecam.freeEntity.prevRotationYawHead = Freecam.freeEntity.rotationYaw;
+            callbackInfo.cancel();
+            return;
+        }
+        if (Myau.rotationManager != null && Myau.rotationManager.isRotated()) {
             callbackInfo.cancel();
         }
     }

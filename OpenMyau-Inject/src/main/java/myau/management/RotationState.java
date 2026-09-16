@@ -52,6 +52,10 @@ public class RotationState {
         priority = n;
     }
 
+    public static float bodyYawToward(float targetYaw, float currentYawOffset) {
+        return RotationState.calculateRenderYawOffset(targetYaw, currentYawOffset);
+    }
+
     public static boolean isActived() {
         return RotationState.isRotated(0);
     }

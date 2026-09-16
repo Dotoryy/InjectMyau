@@ -78,6 +78,8 @@ public abstract class MixinMinecraft {
             at = {@At("HEAD")}
     )
     private void loadWorld(WorldClient worldClient, String string, CallbackInfo callbackInfo) {
+        myau.management.blockage.OutboundNetworkBlockage.get().reset();
+        myau.management.blockage.InboundNetworkBlockage.get().reset();
         EventManager.call(new LoadWorldEvent());
     }
 

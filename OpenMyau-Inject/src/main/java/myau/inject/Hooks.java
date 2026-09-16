@@ -68,6 +68,8 @@ public final class Hooks {
                 .at(Position.HEAD).calls("rightClickMouse", "()Z").cancellable().add();
         HookRegistry.hook(MINECRAFT, "clickMouse", V)
                 .at(Position.HEAD).calls("clickMouse", "()Z").cancellable().add();
+        HookRegistry.hook(MINECRAFT, "sendClickBlockToController", "(Z)V")
+                .at(Position.HEAD).calls("sendClickBlockToController", "()Z").cancellable().add();
 
         HookRegistry.hook(KEY_BINDING, "setKeyBindState", "(IZ)V")
                 .at(Position.HEAD).calls("keyBindStatePre", "(IZ)Z").args("0,1")
@@ -108,16 +110,16 @@ public final class Hooks {
 
         HookRegistry.hook(NETWORK_MANAGER, "channelRead0",
                         "(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/Packet;)V")
-                .at(Position.HEAD).calls("packetReceive", "(Ljava/lang/Object;)Z")
-                .args("1").cancellable().add();
+                .at(Position.HEAD).calls("packetReceive", "(Ljava/lang/Object;Ljava/lang/Object;)Z")
+                .args("this,1").cancellable().add();
         HookRegistry.hook(NETWORK_MANAGER, "sendPacket", "(Lnet/minecraft/network/Packet;)V")
-                .at(Position.HEAD).calls("packetSend", "(Ljava/lang/Object;)Z")
-                .args("0").cancellable().add();
+                .at(Position.HEAD).calls("packetSend", "(Ljava/lang/Object;Ljava/lang/Object;)Z")
+                .args("this,0").cancellable().add();
         HookRegistry.hook(NETWORK_MANAGER, "sendPacket",
                         "(Lnet/minecraft/network/Packet;Lio/netty/util/concurrent/GenericFutureListener;"
                                 + "[Lio/netty/util/concurrent/GenericFutureListener;)V")
-                .at(Position.HEAD).calls("packetSendWithListeners", "(Ljava/lang/Object;)Z")
-                .args("0").cancellable().add();
+                .at(Position.HEAD).calls("packetSendWithListeners", "(Ljava/lang/Object;Ljava/lang/Object;)Z")
+                .args("this,0").cancellable().add();
     }
     private static void blocks() {
         String world = WorldCallbacks.OWNER;
@@ -242,8 +244,8 @@ public final class Hooks {
                 .at(Position.HEAD).cancellable().args("this,0,1,2")
                 .calls("setVelocity", "(Ljava/lang/Object;DDD)Z").add();
         HookRegistry.hook(ENTITY, "setAngles", "(FF)V").in(entity)
-                .at(Position.HEAD).cancellable().args("this")
-                .calls("setAngles", "(Ljava/lang/Object;)Z").add();
+                .at(Position.HEAD).cancellable().args("this,0,1")
+                .calls("setAngles", "(Ljava/lang/Object;FF)Z").add();
 
         HookRegistry.hook(ENTITY, "moveEntity", "(DDD)V").in(entity)
                 .at(Position.HEAD).args("this")
@@ -301,6 +303,11 @@ public final class Hooks {
                 .at(Position.BEFORE_INVOKE)
                 .invoking(LOCAL_PLAYER, "onUpdateWalkingPlayer", "()V")
                 .calls("onMotionUpdate").add();
+        HookRegistry.hook(LOCAL_PLAYER, "onUpdateWalkingPlayer", update).in(local)
+                .at(Position.REPLACE_INVOKE)
+                .invoking(LOCAL_PLAYER, "isCurrentViewEntity", "()Z")
+                .calls("isCurrentViewEntityForMotion",
+                        "(Lnet/minecraft/client/entity/EntityPlayerSP;)Z").add();
         HookRegistry.hook(LOCAL_PLAYER, "onLivingUpdate", update).in(local)
                 .at(Position.BEFORE_INVOKE)
                 .invoking(ABSTRACT_PLAYER, "onLivingUpdate", "()V").membersOf(LIVING)

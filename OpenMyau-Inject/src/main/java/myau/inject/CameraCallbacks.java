@@ -10,6 +10,7 @@ import myau.module.modules.AntiDebuff;
 import myau.module.modules.GhostHand;
 import myau.module.modules.KillAura;
 import myau.module.modules.NoHurtCam;
+import myau.module.modules.NoSlow;
 import myau.module.modules.Scaffold;
 import myau.module.modules.ViewClip;
 import net.minecraft.block.Block;
@@ -49,7 +50,9 @@ public final class CameraCallbacks {
                 }
             }
             KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
-            if (killAura.isEnabled() && killAura.isBlocking()) {
+            NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
+            if (killAura.isEnabled() && killAura.isBlocking()
+                    || noSlow != null && noSlow.isForcingBlockAnimation()) {
                 savedUsing = AccessorEntityPlayer.getItemInUse(mc.thePlayer);
                 usingSaved = true;
                 AccessorEntityPlayer.setItemInUse(mc.thePlayer,

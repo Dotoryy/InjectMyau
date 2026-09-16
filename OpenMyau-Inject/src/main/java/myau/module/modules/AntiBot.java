@@ -75,6 +75,9 @@ public class AntiBot extends Module {
         if (module == null || !module.isEnabled()) {
             return false;
         }
+        if (Freecam.isFreeEntity(entity)) {
+            return true;
+        }
         return Myau.botManager.isBot(entity);
     }
     @EventTarget

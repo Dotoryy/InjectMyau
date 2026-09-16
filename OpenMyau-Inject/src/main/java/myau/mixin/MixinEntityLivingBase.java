@@ -2,6 +2,7 @@ package myau.mixin;
 
 import myau.Myau;
 import myau.event.EventManager;
+import myau.events.JumpEvent;
 import myau.events.MoveEvent;
 import myau.events.StrafeEvent;
 import myau.management.RotationState;
@@ -26,9 +27,17 @@ public abstract class MixinEntityLivingBase extends MixinEntity {
             ordinal = 0
     )
     private float jump(float float1) {
-        return (Entity) ((Object) this) instanceof EntityPlayerSP && RotationState.isActived()
-                ? RotationState.getSmoothedYaw() * (float) (Math.PI / 180.0)
-                : float1;
+        if (!((Entity) ((Object) this) instanceof EntityPlayerSP)) {
+            return float1;
+        }
+        boolean active = RotationState.isActived();
+        float yaw = active ? RotationState.getSmoothedYaw() : this.rotationYaw;
+        JumpEvent event = new JumpEvent(yaw);
+        EventManager.call(event);
+        if (!active && event.getYaw() == yaw) {
+            return float1;
+        }
+        return event.getYaw() * (float) (Math.PI / 180.0);
     }
 
     @Redirect(

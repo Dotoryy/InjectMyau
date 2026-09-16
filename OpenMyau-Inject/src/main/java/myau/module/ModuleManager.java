@@ -7,6 +7,7 @@ import myau.events.KeyEvent;
 import myau.events.TickEvent;
 import myau.module.modules.GuiModule;
 import myau.module.modules.HUD;
+import myau.module.modules.Timer;
 import myau.util.ChatUtil;
 import myau.util.SoundUtil;
 
@@ -41,6 +42,9 @@ public class ModuleManager {
                 continue;
             }
             if (event.isGuiOpen() && !module.worksWithGuiOpen()) {
+                continue;
+            }
+            if (module instanceof Timer && ((Timer) module).consumeQueuedToggle()) {
                 continue;
             }
             boolean shouldNotify = module.toggle();

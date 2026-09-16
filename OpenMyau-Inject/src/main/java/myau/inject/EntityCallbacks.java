@@ -2,11 +2,13 @@ package myau.inject;
 
 import myau.Myau;
 import myau.event.EventManager;
+import myau.events.JumpEvent;
 import myau.events.KnockbackEvent;
 import myau.events.MoveEvent;
 import myau.events.SafeWalkEvent;
 import myau.events.StrafeEvent;
 import myau.management.RotationState;
+import myau.module.modules.Freecam;
 import myau.module.modules.Jesus;
 import myau.module.modules.KeepSprint;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -52,10 +54,18 @@ public final class EntityCallbacks {
             return false;
         }
     }
-    public static boolean setAngles(Object self) {
+    public static boolean setAngles(Object self, float yaw, float pitch) {
         try {
-            return self instanceof EntityPlayerSP
-                    && Myau.rotationManager != null
+            if (!(self instanceof EntityPlayerSP)) {
+                return false;
+            }
+            if (Freecam.freeEntity != null) {
+                Freecam.freeEntity.setAngles(yaw, pitch);
+                Freecam.freeEntity.rotationYawHead = Freecam.freeEntity.rotationYaw;
+                Freecam.freeEntity.prevRotationYawHead = Freecam.freeEntity.rotationYaw;
+                return true;
+            }
+            return Myau.rotationManager != null
                     && Myau.rotationManager.isRotated();
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);
@@ -79,9 +89,17 @@ public final class EntityCallbacks {
     public static float jumpYaw(float value) {
         Object self = jumpingEntity;
         try {
-            return self instanceof EntityPlayerSP && RotationState.isActived()
-                    ? RotationState.getSmoothedYaw() * (float) (Math.PI / 180.0)
-                    : value;
+            if (!(self instanceof EntityPlayerSP)) {
+                return value;
+            }
+            boolean active = RotationState.isActived();
+            float yaw = active ? RotationState.getSmoothedYaw() : ((EntityPlayerSP) self).rotationYaw;
+            JumpEvent event = new JumpEvent(yaw);
+            EventManager.call(event);
+            if (!active && event.getYaw() == yaw) {
+                return value;
+            }
+            return event.getYaw() * (float) (Math.PI / 180.0);
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);
             return value;

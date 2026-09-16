@@ -10,8 +10,10 @@ import myau.events.SprintEvent;
 import myau.events.MoveInputEvent;
 import myau.events.PlayerUpdateEvent;
 import myau.events.UpdateEvent;
+import myau.management.LateRotation;
 import myau.management.RotationState;
 import myau.module.modules.AntiDebuff;
+import myau.module.modules.Freecam;
 import myau.module.modules.NoSlow;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
@@ -90,6 +92,20 @@ public final class LocalPlayerCallbacks {
     }
     public static boolean isRidingDuringUpdate(EntityPlayerSP player) {
         try {
+            float lateBodyYaw = LateRotation.consumeBodyYaw(player.ticksExisted);
+            if (!Float.isNaN(lateBodyYaw)) {
+                player.renderYawOffset = RotationState.bodyYawToward(lateBodyYaw, player.prevRenderYawOffset);
+                player.rotationYawHead = lateBodyYaw;
+            }
+            float lateYaw = LateRotation.consumeYaw(player.ticksExisted);
+            if (!Float.isNaN(lateYaw) && Float.isNaN(overrideYaw)) {
+                pendingYaw = player.rotationYaw;
+                pendingPitch = player.rotationPitch;
+                overrideYaw = lateYaw;
+                overridePitch = player.rotationPitch;
+                player.rotationYawHead = lateYaw;
+                LateRotation.scheduleBodyYaw(lateYaw, player.ticksExisted + 1);
+            }
             if (!Float.isNaN(overrideYaw) && !Float.isNaN(overridePitch)) {
                 player.rotationYaw = overrideYaw;
                 player.rotationPitch = overridePitch;
@@ -98,6 +114,14 @@ public final class LocalPlayerCallbacks {
             Log.swallowed(swallowed);
         }
         return player.isRiding();
+    }
+    public static boolean isCurrentViewEntityForMotion(EntityPlayerSP player) {
+        try {
+            return Minecraft.getMinecraft().getRenderViewEntity() == player || Freecam.freeEntity != null;
+        } catch (Throwable swallowed) {
+            Log.swallowed(swallowed);
+            return Minecraft.getMinecraft().getRenderViewEntity() == player;
+        }
     }
     public static void onMotionUpdate() {
         try {

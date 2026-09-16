@@ -47,6 +47,7 @@ public final class Categories {
                 add(modules, Autoblock.class);
                 add(modules, Displace.class);
                 add(modules, KillAura.class);
+                add(modules, TeleportAura.class);
                 add(modules, Wtap.class);
                 add(modules, Velocity.class);
                 add(modules, Freeze.class);
@@ -82,6 +83,8 @@ public final class Categories {
                 add(modules, Stasis.class);
                 add(modules, Timer.class);
                 add(modules, InventoryMove.class);
+                add(modules, Jump45.class);
+                add(modules, SnapTap.class);
                 break;
             case RENDER:
                 add(modules, BlockCounter.class);
@@ -121,6 +124,7 @@ public final class Categories {
                 add(modules, GhostHand.class);
                 add(modules, MCF.class);
                 add(modules, AntiDebuff.class);
+                add(modules, Freecam.class);
                 break;
             case MISC:
                 add(modules, UnInject.class);

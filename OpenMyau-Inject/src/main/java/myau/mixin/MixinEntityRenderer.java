@@ -57,7 +57,9 @@ public abstract class MixinEntityRenderer {
                 }
             }
             KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
-            if (killAura.isEnabled() && killAura.isBlocking()) {
+            NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
+            if (killAura.isEnabled() && killAura.isBlocking()
+                    || noSlow != null && noSlow.isForcingBlockAnimation()) {
                 this.using = new Box<>(((IAccessorEntityPlayer) this.mc.thePlayer).getItemInUse());
                 ((IAccessorEntityPlayer) this.mc.thePlayer).setItemInUse(this.mc.thePlayer.inventory.getCurrentItem());
                 this.useCount = new Box<>(((IAccessorEntityPlayer) this.mc.thePlayer).getItemInUseCount());

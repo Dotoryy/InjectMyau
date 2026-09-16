@@ -248,6 +248,10 @@ public class KillAura extends Module {
         if (Myau.playerStateManager.digging || Myau.playerStateManager.placing) {
             return false;
         }
+        NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
+        if (noSlow != null && noSlow.isWatchdogReleaseTick()) {
+            return false;
+        }
         if (this.isPlayerBlocking() && this.autoBlock.getValue() != 1) {
             return false;
         }
@@ -1205,7 +1209,7 @@ public class KillAura extends Module {
         }
     }
 
-    private boolean isManagingBlock() {
+    public boolean isManagingBlock() {
         return this.autoBlock.getValue() != AUTOBLOCK_NONE;
     }
     @EventTarget

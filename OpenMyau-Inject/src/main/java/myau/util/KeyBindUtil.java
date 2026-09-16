@@ -30,15 +30,22 @@ public class KeyBindUtil {
                     return buttonName != null ? buttonName : "MOUSE" + mouseButton;
             }
         }
-        return Keyboard.getKeyName(keyCode);
+        if (keyCode >= Keyboard.KEYBOARD_SIZE) {
+            return "KEY" + keyCode;
+        }
+        String name = Keyboard.getKeyName(keyCode);
+        return name != null ? name : "KEY" + keyCode;
     }
 
     public static boolean isKeyDown(int keyCode) {
-        return keyCode < 0 ? Mouse.isButtonDown(keyCode + 100) : Keyboard.isKeyDown(keyCode);
+        if (keyCode < 0) {
+            return Mouse.isButtonDown(keyCode + 100);
+        }
+        return keyCode > 0 && keyCode < Keyboard.KEYBOARD_SIZE && Keyboard.isKeyDown(keyCode);
     }
 
     public static void updateKeyState(int keyCode) {
-        KeyBindUtil.setKeyBindState(keyCode, keyCode < 0 ? Mouse.isButtonDown(keyCode + 100) : Keyboard.isKeyDown(keyCode));
+        KeyBindUtil.setKeyBindState(keyCode, KeyBindUtil.isKeyDown(keyCode));
     }
 
     private static final ThreadLocal<Boolean> SYNTHETIC = new ThreadLocal<Boolean>();

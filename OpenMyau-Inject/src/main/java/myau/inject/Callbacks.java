@@ -6,6 +6,7 @@ import myau.event.EventManager;
 import myau.event.types.EventType;
 import myau.events.KeyEvent;
 import org.lwjgl.input.Keyboard;
+import myau.events.HitBlockEvent;
 import myau.events.LeftClickMouseEvent;
 import myau.events.MouseButtonEvent;
 import myau.events.PreAttackEvent;
@@ -25,6 +26,7 @@ import myau.module.modules.NoHitDelay;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.INetHandlerPlayClient;
 import net.minecraft.client.Minecraft;
+import myau.util.ConnectionUtil;
 import myau.util.KeyBindUtil;
 
 public final class Callbacks {
@@ -117,6 +119,26 @@ public final class Callbacks {
         }
     }
 
+    public static boolean sendClickBlockToController() {
+        try {
+            if (!Bootstrap.isStarted()) {
+                return false;
+            }
+            HitBlockEvent event = new HitBlockEvent();
+            EventManager.call(event);
+            if (!event.isCancelled()) {
+                return false;
+            }
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.playerController != null) {
+                mc.playerController.resetBlockRemoving();
+            }
+            return true;
+        } catch (Throwable swallowed) {
+            Log.swallowed(swallowed);
+            return false;
+        }
+    }
     public static boolean clickMouse() {
         try {
             if (!Bootstrap.isStarted()) {
@@ -226,15 +248,15 @@ public final class Callbacks {
             Log.swallowed(swallowed);
         }
     }
-    public static boolean packetReceive(Object raw) {
+    public static boolean packetReceive(Object manager, Object raw) {
         try {
             if (!Bootstrap.isStarted()) {
                 return false;
             }
-            Packet<?> packet = (Packet<?>) raw;
-            if (packet.getClass().getName().startsWith("net.minecraft.network.play.client")) {
+            if (ConnectionUtil.isForeign(manager)) {
                 return false;
             }
+            Packet<?> packet = (Packet<?>) raw;
             if (Myau.delayManager != null
                     && Myau.delayManager.shouldDelay((Packet<INetHandlerPlayClient>) packet)) {
                 return true;
@@ -244,28 +266,28 @@ public final class Callbacks {
             if (event.isCancelled()) {
                 return true;
             }
-            return packet.getClass().getName().startsWith("net.minecraft.network.play.server")
+            return ConnectionUtil.isPlayPacket(packet)
                     && InboundNetworkBlockage.get().isBlocked(packet);
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);
             return false;
         }
     }
-    public static boolean packetSend(Object raw) {
+    public static boolean packetSend(Object manager, Object raw) {
         try {
             if (!Bootstrap.isStarted()) {
                 return false;
             }
-            Packet<?> packet = (Packet<?>) raw;
-            if (packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
+            if (ConnectionUtil.isForeign(manager)) {
                 return false;
             }
+            Packet<?> packet = (Packet<?>) raw;
             PacketEvent event = new PacketEvent(EventType.SEND, packet);
             EventManager.call(event);
             if (event.isCancelled()) {
                 return true;
             }
-            if (packet.getClass().getName().startsWith("net.minecraft.network.play.client")
+            if (ConnectionUtil.isPlayPacket(packet)
                     && OutboundNetworkBlockage.get().isBlocked(packet)) {
                 return true;
             }
@@ -275,15 +297,15 @@ public final class Callbacks {
             return false;
         }
     }
-    public static boolean packetSendWithListeners(Object raw) {
+    public static boolean packetSendWithListeners(Object manager, Object raw) {
         try {
             if (!Bootstrap.isStarted()) {
                 return false;
             }
-            Packet<?> packet = (Packet<?>) raw;
-            if (packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
+            if (ConnectionUtil.isForeign(manager)) {
                 return false;
             }
+            Packet<?> packet = (Packet<?>) raw;
             return handOffToManagers(packet);
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);

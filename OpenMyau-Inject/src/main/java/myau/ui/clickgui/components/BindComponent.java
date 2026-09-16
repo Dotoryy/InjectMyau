@@ -56,7 +56,7 @@ public class BindComponent extends Component {
             return true;
         }
         if (this.binding && button > 1) {
-            this.module.setKey(button + 1000);
+            this.module.setKey(button - 100);
             this.binding = false;
             return true;
         }

@@ -198,8 +198,12 @@ public class Myau {
         moduleManager.modules.put(Stasis.class, new Stasis());
         moduleManager.modules.put(Timer.class, new Timer());
         moduleManager.modules.put(InventoryMove.class, new InventoryMove());
+        moduleManager.modules.put(Freecam.class, new Freecam());
+        moduleManager.modules.put(Jump45.class, new Jump45());
+        moduleManager.modules.put(SnapTap.class, new SnapTap());
         moduleManager.modules.put(TargetHUD.class, new TargetHUD());
         moduleManager.modules.put(TargetStrafe.class, new TargetStrafe());
+        moduleManager.modules.put(TeleportAura.class, new TeleportAura());
         moduleManager.modules.put(Tracers.class, new Tracers());
         moduleManager.modules.put(Trajectories.class, new Trajectories());
         moduleManager.modules.put(Velocity.class, new Velocity());

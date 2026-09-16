@@ -85,8 +85,8 @@ public class SliderComponent extends Component {
         if (this.heldDown) {
             double span = this.module.category.getWidth() - 8;
             double along = Math.min(span, Math.max(0.0, mouseX - this.x - 4));
-            double value = round(along / span * (this.maximum - this.minimum) + this.minimum);
-            this.apply(value);
+            double raw = along / span * (this.maximum - this.minimum) + this.minimum;
+            this.apply(this.fineStepDecimals() > 0 ? raw : round(raw));
         }
         this.shownValue += (this.current() - this.shownValue) * CATCH_UP;
         this.filledWidth = this.widthFor(this.shownValue);
@@ -133,7 +133,21 @@ public class SliderComponent extends Component {
         if (value == Math.rint(value) && !Double.isInfinite(value)) {
             return String.valueOf((long) value);
         }
+        int decimals = this.fineStepDecimals();
+        if (decimals > 0) {
+            return String.format("%." + decimals + "f", value);
+        }
         return String.format("%.1f", round(value));
+    }
+    private int fineStepDecimals() {
+        if (!(this.property instanceof FloatProperty)) {
+            return 0;
+        }
+        float step = ((FloatProperty) this.property).getStep();
+        if (step <= 0.0F || step >= STEP) {
+            return 0;
+        }
+        return Math.max(1, new BigDecimal(Float.toString(step)).stripTrailingZeros().scale());
     }
     private double widthFor(double value) {
         double span = this.maximum - this.minimum;

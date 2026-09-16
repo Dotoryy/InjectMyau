@@ -484,6 +484,18 @@ public class Autoblock extends Module {
         return this.isEnabled() && (this.isBlocking || this.isLagging);
     }
 
+    public boolean isAutoBlocking() {
+        return this.isEnabled() && this.isBlocking && !this.manualBlock;
+    }
+
+    public int getBlockedTicks() {
+        return this.blockStartTick < 0 ? -1 : this.tickCounter - this.blockStartTick;
+    }
+
+    public int getHoldTicks() {
+        return msToTicks(this.maxHoldMs.getValue());
+    }
+
     private void resetState(boolean releaseUseKey) {
         boolean restorePhysicalUse = this.isBlocking && mc.gameSettings != null
                 && mc.gameSettings.keyBindUseItem.isKeyDown() && Mouse.isButtonDown(RIGHT_MOUSE)

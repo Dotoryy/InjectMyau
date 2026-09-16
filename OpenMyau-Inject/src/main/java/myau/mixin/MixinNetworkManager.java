@@ -6,6 +6,9 @@ import myau.Myau;
 import myau.event.EventManager;
 import myau.event.types.EventType;
 import myau.events.PacketEvent;
+import myau.management.blockage.InboundNetworkBlockage;
+import myau.management.blockage.OutboundNetworkBlockage;
+import myau.util.ConnectionUtil;
 import net.minecraft.network.NetworkManager;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.INetHandlerPlayClient;
@@ -27,6 +30,9 @@ public abstract class MixinNetworkManager {
             cancellable = true
     )
     private void channelRead0(ChannelHandlerContext channelHandlerContext, Packet<?> packet, CallbackInfo callbackInfo) {
+        if (ConnectionUtil.isForeign(this)) {
+            return;
+        }
         if (!packet.getClass().getName().startsWith("net.minecraft.network.play.client")) {
             if (Myau.delayManager != null && Myau.delayManager.shouldDelay((Packet<INetHandlerPlayClient>) packet)) {
                 callbackInfo.cancel();
@@ -34,6 +40,8 @@ public abstract class MixinNetworkManager {
                 PacketEvent event = new PacketEvent(EventType.RECEIVE, packet);
                 EventManager.call(event);
                 if (event.isCancelled()) {
+                    callbackInfo.cancel();
+                } else if (ConnectionUtil.isPlayPacket(packet) && InboundNetworkBlockage.get().isBlocked(packet)) {
                     callbackInfo.cancel();
                 }
             }
@@ -46,10 +54,15 @@ public abstract class MixinNetworkManager {
             cancellable = true
     )
     private void sendPacket(Packet<?> packet, CallbackInfo callbackInfo) {
+        if (ConnectionUtil.isForeign(this)) {
+            return;
+        }
         if (!packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
             PacketEvent event = new PacketEvent(EventType.SEND, packet);
             EventManager.call(event);
             if (event.isCancelled()) {
+                callbackInfo.cancel();
+            } else if (ConnectionUtil.isPlayPacket(packet) && OutboundNetworkBlockage.get().isBlocked(packet)) {
                 callbackInfo.cancel();
             } else if (Myau.playerStateManager != null && Myau.blinkManager != null && Myau.lagManager != null) {
                 if (!Myau.lagManager.isFlushing()) {
@@ -79,6 +92,9 @@ public abstract class MixinNetworkManager {
             GenericFutureListener<? extends Future<? super Void>>[] arr,
             CallbackInfo callbackInfo
     ) {
+        if (ConnectionUtil.isForeign(this)) {
+            return;
+        }
         if (!packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
             if (Myau.playerStateManager != null && Myau.blinkManager != null && Myau.lagManager != null) {
                 if (!Myau.lagManager.isFlushing()) {

@@ -137,11 +137,34 @@ if(MSVC)
     target_link_options(myau_loader PRIVATE /MANIFEST:NO)
 endif()
 
+add_executable(myau_loader_local WIN32
+        loader/download.cpp
+        loader/gui.cpp
+        loader/inject.cpp
+        loader/target.cpp
+        "${GENERATED_RC}")
+add_dependencies(myau_loader_local myau_payload)
+target_include_directories(myau_loader_local PRIVATE loader "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(myau_loader_local PRIVATE psapi gdiplus ole32 dwmapi winhttp shell32)
+if(DEFINED LOCAL_PAYLOAD_DIR)
+    set(MYAU_LOCAL_DIR_VALUE "${LOCAL_PAYLOAD_DIR}")
+else()
+    set(MYAU_LOCAL_DIR_VALUE "$<TARGET_FILE_DIR:myau_native>")
+endif()
+target_compile_definitions(myau_loader_local PRIVATE
+        MYAU_LOCAL_LOADER
+        "MYAU_LOCAL_DIR=\"${MYAU_LOCAL_DIR_VALUE}\"")
+if(MSVC)
+    target_link_options(myau_loader_local PRIVATE /MANIFEST:NO)
+endif()
+
 if(MSVC)
     target_compile_options(myau_native PRIVATE /W3 /EHsc)
     target_compile_options(myau_loader PRIVATE /W3 /EHsc)
+    target_compile_options(myau_loader_local PRIVATE /W3 /EHsc)
 
     set_property(TARGET myau_native PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET myau_loader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    set_property(TARGET myau_loader_local PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     cmake_policy(SET CMP0091 NEW)
 endif()

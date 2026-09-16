@@ -93,6 +93,61 @@ public class MoveUtil {
         return MoveUtil.getBaseJumpHigh(speedLevel);
     }
 
+    public static boolean isMoving() {
+        return MoveUtil.mc.thePlayer.moveForward != 0.0f || MoveUtil.mc.thePlayer.moveStrafing != 0.0f;
+    }
+
+    public static void strafe() {
+        MoveUtil.strafe(MoveUtil.getSpeed());
+    }
+
+    public static void strafe(double speed) {
+        if (MoveUtil.isMoving()) {
+            MoveUtil.setSpeed(speed, MoveUtil.getMoveYaw());
+        }
+    }
+
+    public static void moveFlying(double speed) {
+        if (MoveUtil.isMoving()) {
+            MoveUtil.addSpeed(speed, MoveUtil.getMoveYaw());
+        }
+    }
+
+    public static void partialStrafePercent(double percent) {
+        double factor = Math.min(1.0, Math.max(0.0, percent / 100.0));
+        double motionX = MoveUtil.mc.thePlayer.motionX;
+        double motionZ = MoveUtil.mc.thePlayer.motionZ;
+        MoveUtil.strafe();
+        MoveUtil.mc.thePlayer.motionX = motionX + (MoveUtil.mc.thePlayer.motionX - motionX) * factor;
+        MoveUtil.mc.thePlayer.motionZ = motionZ + (MoveUtil.mc.thePlayer.motionZ - motionZ) * factor;
+    }
+
+    public static void useDiagonalSpeed() {
+        int pressed = 0;
+        if (MoveUtil.mc.gameSettings.keyBindForward.isKeyDown()) {
+            ++pressed;
+        }
+        if (MoveUtil.mc.gameSettings.keyBindRight.isKeyDown()) {
+            ++pressed;
+        }
+        if (MoveUtil.mc.gameSettings.keyBindBack.isKeyDown()) {
+            ++pressed;
+        }
+        if (MoveUtil.mc.gameSettings.keyBindLeft.isKeyDown()) {
+            ++pressed;
+        }
+        if (pressed == 1) {
+            MoveUtil.moveFlying(MoveUtil.mc.thePlayer.onGround ? 0.0026000750109401644 : 5.199896488849598E-4);
+        }
+    }
+
+    public static boolean collidesVertically(double offsetY) {
+        return !MoveUtil.mc.theWorld
+                .getCollidingBoundingBoxes(MoveUtil.mc.thePlayer,
+                        MoveUtil.mc.thePlayer.getEntityBoundingBox().offset(0.0, offsetY, 0.0))
+                .isEmpty();
+    }
+
     public static double getSpeed() {
         return MoveUtil.getSpeed(MoveUtil.mc.thePlayer.motionX, MoveUtil.mc.thePlayer.motionZ);
     }
