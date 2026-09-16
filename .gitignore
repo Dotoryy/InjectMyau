@@ -45,3 +45,30 @@ replay_pid*
 
 # Logs
 *.log
+
+# Native build artifacts
+*.dll
+*.exe
+*.pdb
+*.obj
+*.lib
+*.exp
+*.ilk
+
+# Built jars -- the Gradle wrapper is the only one that belongs in the repo
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and patch leftovers
+*.bak
+*.orig
+*.rej
+*~
+
+# Local tooling paths
+local.properties
