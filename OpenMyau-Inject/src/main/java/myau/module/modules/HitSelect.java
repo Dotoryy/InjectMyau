@@ -2,21 +2,24 @@ package myau.module.modules;
 
 import myau.Myau;
 import myau.event.EventTarget;
-import myau.event.types.EventType;
-import myau.events.LeftClickMouseEvent;
-import myau.events.TickEvent;
+import myau.events.PreAttackEvent;
+import myau.events.PrePlayerInteractEvent;
 import myau.module.Module;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
 import myau.property.properties.ModeProperty;
 import myau.property.properties.PercentProperty;
-import myau.util.RotationUtil;
-import myau.util.TeamUtil;
+import myau.util.CombatTargeting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSword;
+import net.minecraft.item.ItemTool;
 import net.minecraft.potion.Potion;
+import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.MovingObjectPosition.MovingObjectType;
 
 import java.util.HashMap;
@@ -25,279 +28,255 @@ import java.util.Map;
 
 public class HitSelect extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
-    private static final double HIT_RANGE = 3.0;
-    private static final double HIT_RANGE_SQ = HIT_RANGE * HIT_RANGE;
-    private static final long SERVER_CONFIRM_COOLDOWN_MS = 500L;
-    private static final long SERVER_CONFIRM_TIMEOUT_MS = 1500L;
+    private static final double HIT_RANGE_SQ = 9.0;
+    private static final int HURT_WINDOW_TICKS = 10;
+    private static final int SERVER_CONFIRM_COOLDOWN_TICKS = 10;
+    private static final int SERVER_CONFIRM_TIMEOUT_TICKS = 30;
     private static final int BLOCK_WAIT_FIRST = 1;
-    private static final int BLOCK_SERVER_COOLDOWN = 1 << 3;
-    private static final int BLOCK_PREDICTED_BURST = 1 << 4;
-    private static final int BLOCK_CRITICALS = 1 << 5;
+    private static final int BLOCK_SERVER_COOLDOWN = 8;
+    private static final int BLOCK_PREDICTED_BURST = 16;
+    private static final int BLOCK_CRITICALS = 32;
 
-    public final IntProperty pauseDuration = new IntProperty("pause-duration", 500, 0, 500);
+    public final IntProperty pauseDuration = new IntProperty("pause-duration", 500, 0, 500, 50);
     public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"BURST", "CRITICALS"});
-    public final IntProperty waitForFirstHit = new IntProperty("wait-for-first-hit", 0, 0, 500);
-    public final IntProperty hitLaterInTrades = new IntProperty("hit-later-in-trades", 0, 0, 500);
+    public final IntProperty waitForFirstHit = new IntProperty("wait-for-first-hit", 0, 0, 500, 50);
     public final IntProperty whenOnlyCombo = new IntProperty("when-only-combo", 0, 0, 10);
+    public final BooleanProperty weaponOnly = new BooleanProperty("weapons-only", false);
+    public final BooleanProperty ignoreTeammates = new BooleanProperty("ignore-teammates", true);
     public final BooleanProperty disableDuringKnockback = new BooleanProperty("disable-during-knockback", false);
     public final BooleanProperty onlyWhileDamaged = new BooleanProperty("only-while-damaged", false);
     public final BooleanProperty useServerAttackTime = new BooleanProperty("use-server-attack-time", false);
     public final BooleanProperty fakeSwing = new BooleanProperty("fake-swing", false);
     public final PercentProperty inCombatCancelRate = new PercentProperty("in-combat-cancel-rate", 100);
     public final PercentProperty missedSwingsCancelRate = new PercentProperty("missed-swings-cancel-rate", 0);
+
     private EntityPlayer currentTarget;
-    private EntityPlayer engagedTarget;
     private final Map<Integer, TargetState> targetStates = new HashMap<>();
     private int lastSelfHurtTime;
     private boolean takingKnockback;
     private boolean waitFirstTracking;
-    private long waitFirstStartMs = -1L;
+    private int waitFirstStartTick = -1;
     private boolean waitFirstUnlocked;
+    private int tickCounter;
+
     public HitSelect() {
         super("Hit Select", false);
     }
+
     @Override
     public String[] getSuffix() {
-        return new String[]{String.format("%dms", this.pauseDuration.getValue())};
+        return new String[]{this.mode.getValue() == 1 ? "Criticals" : "Burst"};
     }
+
     @Override
     public void onEnabled() {
+        this.tickCounter = 0;
         this.resetAllState();
     }
+
     @Override
     public void onDisabled() {
         this.resetAllState();
     }
-    @EventTarget
-    public void onTick(TickEvent event) {
-        if (!this.isEnabled() || event.getType() != EventType.PRE) {
-            return;
-        }
-        if (mc.thePlayer == null || mc.theWorld == null || mc.thePlayer.isDead) {
-            this.resetAllState();
-            return;
-        }
-        long now = System.currentTimeMillis();
-        this.pruneTargetStates();
-        this.updateCurrentTarget(this.findTarget(), now);
-        this.updateSelfDamage();
-        this.updateTargetDamage(now);
+
+    private static int msToTicks(double ms) {
+        return ms <= 0.0 ? 0 : (int) Math.ceil(ms / 50.0);
     }
 
     @EventTarget
-    public void onLeftClick(LeftClickMouseEvent event) {
-        if (!this.isEnabled()) {
-            return;
+    public void onPrePlayerInteract(PrePlayerInteractEvent event) {
+        if (mc.thePlayer != null && mc.theWorld != null && !mc.thePlayer.isDead) {
+            ++this.tickCounter;
+            int currentTick = this.tickCounter;
+            this.pruneTargetStates();
+            EntityPlayer nextTarget = CombatTargeting.findTarget(HIT_RANGE_SQ, this.ignoreTeammates.getValue());
+            this.updateCurrentTarget(nextTarget, currentTick);
+            this.updateSelfDamage(currentTick);
+            this.updateTargetDamage(currentTick);
+        } else {
+            this.resetAllState();
         }
-        if (mc.thePlayer == null || mc.theWorld == null || mc.thePlayer.isDead) {
-            return;
-        }
+    }
 
+    @EventTarget
+    public void onPreAttack(PreAttackEvent event) {
+        if (!this.canProcessClicks() || this.weaponOnly.getValue() && !this.holdingWeapon()) {
+            return;
+        }
         KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
         if (killAura != null && killAura.isEnabled() && killAura.getTarget() != null) {
             return;
         }
-
-        if (mc.objectMouseOver != null && mc.objectMouseOver.typeOfHit == MovingObjectType.BLOCK) {
+        int currentTick = this.tickCounter;
+        ClickType clickType = this.classifyClick(event.objectMouseOver);
+        if (clickType == ClickType.BLOCK_INTERACTION) {
             return;
         }
-        boolean hitLivingEntity = mc.objectMouseOver != null
-                && mc.objectMouseOver.typeOfHit == MovingObjectType.ENTITY
-                && mc.objectMouseOver.entityHit instanceof EntityLivingBase;
-
-        if (!hitLivingEntity) {
+        if (clickType == ClickType.MISSED_SWING) {
             if (this.shouldCancel(this.missedSwingsCancelRate.getValue())) {
-                event.setCancelled(true);
+                this.cancelClick(event);
             }
             return;
         }
-        EntityLivingBase clicked = (EntityLivingBase) mc.objectMouseOver.entityHit;
-        if (this.shouldBlockAttack(clicked)) {
-            event.setCancelled(true);
+        EntityPlayer clickedTarget = CombatTargeting.asValidPlayer(
+                event.objectMouseOver == null ? null : event.objectMouseOver.entityHit,
+                HIT_RANGE_SQ, this.ignoreTeammates.getValue());
+        if (clickedTarget == null) {
+            return;
+        }
+        this.updateCurrentTarget(clickedTarget, currentTick);
+        TargetState state = this.getTargetState(clickedTarget, currentTick);
+        int blockMask = this.getValidHitBlockMask(state, currentTick);
+        boolean shouldBlock = (blockMask & BLOCK_WAIT_FIRST) != 0
+                || (blockMask & BLOCK_PREDICTED_BURST) != 0
+                || this.applyPauseDuration(state, blockMask & ~BLOCK_PREDICTED_BURST, currentTick);
+        if (shouldBlock && this.isComboGateOpen(state) && this.shouldCancel(this.inCombatCancelRate.getValue())) {
+            this.cancelClick(event);
         } else {
-            this.confirmHit(clicked);
+            this.recordPassedValidHit(clickedTarget, currentTick);
         }
     }
-    public boolean shouldBlockAttack(EntityLivingBase targetEntity) {
-        if (!this.isEnabled()) {
-            return false;
-        }
-        if (mc.thePlayer == null || mc.theWorld == null || mc.thePlayer.isDead) {
-            return false;
-        }
 
-        long now = System.currentTimeMillis();
-        EntityPlayer clickedTarget = targetEntity instanceof EntityPlayer ? this.asAttackedPlayer(targetEntity) : null;
-        boolean blocked;
-        if (clickedTarget == null) {
-            blocked = this.shouldCancel(this.missedSwingsCancelRate.getValue());
-        } else {
-            this.updateCurrentTarget(clickedTarget, now);
-            this.engagedTarget = clickedTarget;
-            TargetState state = this.getTargetState(clickedTarget);
-            if (state.comboCount < this.whenOnlyCombo.getValue()) {
-                blocked = false;
-            } else {
-                int blockMask = this.getValidHitBlockMask(state, now);
-                boolean rawBlock = (blockMask & BLOCK_WAIT_FIRST) != 0
-                        || (blockMask & BLOCK_PREDICTED_BURST) != 0
-                        || this.applyPauseDuration(state, blockMask & ~BLOCK_PREDICTED_BURST, now);
-                blocked = rawBlock && this.shouldCancel(this.inCombatCancelRate.getValue());
-            }
+    public boolean shouldBlockAttack(EntityLivingBase targetEntity) {
+        if (!this.isEnabled() || !this.canProcessClicks()) {
+            return false;
         }
+        if (this.weaponOnly.getValue() && !this.holdingWeapon()) {
+            return false;
+        }
+        EntityPlayer clickedTarget = CombatTargeting.asValidPlayer(
+                targetEntity, HIT_RANGE_SQ, this.ignoreTeammates.getValue());
+        if (clickedTarget == null) {
+            return false;
+        }
+        int currentTick = this.tickCounter;
+        this.updateCurrentTarget(clickedTarget, currentTick);
+        TargetState state = this.getTargetState(clickedTarget, currentTick);
+        int blockMask = this.getValidHitBlockMask(state, currentTick);
+        boolean shouldBlock = (blockMask & BLOCK_WAIT_FIRST) != 0
+                || (blockMask & BLOCK_PREDICTED_BURST) != 0
+                || this.applyPauseDuration(state, blockMask & ~BLOCK_PREDICTED_BURST, currentTick);
+        boolean blocked = shouldBlock && this.isComboGateOpen(state)
+                && this.shouldCancel(this.inCombatCancelRate.getValue());
         if (blocked && this.fakeSwing.getValue() && mc.thePlayer != null) {
             this.setSwinging();
         }
         return blocked;
     }
+
     public void confirmHit(EntityLivingBase targetEntity) {
-        if (!this.isEnabled()) {
+        if (!this.isEnabled() || !this.canProcessClicks()) {
             return;
         }
-        if (mc.thePlayer == null || mc.theWorld == null || mc.thePlayer.isDead) {
+        if (this.weaponOnly.getValue() && !this.holdingWeapon()) {
             return;
         }
-        if (!(targetEntity instanceof EntityPlayer)) {
-            return;
-        }
-        EntityPlayer target = this.asAttackedPlayer(targetEntity);
+        EntityPlayer target = CombatTargeting.asValidPlayer(
+                targetEntity, HIT_RANGE_SQ, this.ignoreTeammates.getValue());
         if (target == null) {
             return;
         }
-        this.recordPassedValidHit(target, System.currentTimeMillis());
-    }
-    private EntityPlayer findTarget() {
-        EntityPlayer mouseOverTarget = mc.objectMouseOver == null ? null : this.asValidPlayer(mc.objectMouseOver.entityHit);
-        return mouseOverTarget != null ? mouseOverTarget : this.findClosestTarget();
-    }
-    private EntityPlayer findClosestTarget() {
-        if (mc.theWorld == null) {
-            return null;
-        }
-        EntityPlayer closest = null;
-        double closestDistanceSq = Double.MAX_VALUE;
-        for (EntityPlayer player : mc.theWorld.playerEntities) {
-            if (!this.isValidPlayer(player)) {
-                continue;
-            }
-            double distanceSq = RotationUtil.distanceToEntity(player);
-            distanceSq *= distanceSq;
-            if (distanceSq < closestDistanceSq) {
-                closestDistanceSq = distanceSq;
-                closest = player;
-            }
-        }
-        return closest;
-    }
-    private EntityPlayer asValidPlayer(Entity entity) {
-        if (!(entity instanceof EntityPlayer)) {
-            return null;
-        }
-        EntityPlayer player = (EntityPlayer) entity;
-        return this.isValidPlayer(player) ? player : null;
-    }
-    private EntityPlayer asAttackedPlayer(Entity entity) {
-        if (!(entity instanceof EntityPlayer)) {
-            return null;
-        }
-        EntityPlayer player = (EntityPlayer) entity;
-        if (mc.thePlayer == null || player == mc.thePlayer || player.isDead || player.deathTime != 0) {
-            return null;
-        }
-        return this.isTargetAllowed(player) ? player : null;
-    }
-    private boolean isValidPlayer(EntityPlayer player) {
-        if (mc.thePlayer == null || player == null || player == mc.thePlayer || player.isDead || player.deathTime != 0) {
-            return false;
-        }
-        if (!this.isTargetAllowed(player)) {
-            return false;
-        }
-        double distanceSq = RotationUtil.distanceToEntity(player);
-        return distanceSq * distanceSq <= HIT_RANGE_SQ;
-    }
-    private boolean isTargetAllowed(EntityPlayer player) {
-        return !TeamUtil.isFriend(player) && !TeamUtil.isSameTeam(player) && !TeamUtil.isBot(player);
+        this.recordPassedValidHit(target, this.tickCounter);
     }
 
-    private void setSwinging() {
-        int armSwingEnd = mc.thePlayer.isPotionActive(Potion.digSpeed)
-                ? 6 - (1 + mc.thePlayer.getActivePotionEffect(Potion.digSpeed).getAmplifier())
-                : (mc.thePlayer.isPotionActive(Potion.digSlowdown)
-                        ? 6 + (1 + mc.thePlayer.getActivePotionEffect(Potion.digSlowdown).getAmplifier()) * 2
-                        : 6);
-        if (!mc.thePlayer.isSwingInProgress
-                || mc.thePlayer.swingProgressInt >= armSwingEnd / 2
-                || mc.thePlayer.swingProgressInt < 0) {
-            mc.thePlayer.swingProgressInt = -1;
-            mc.thePlayer.isSwingInProgress = true;
-        }
+    public boolean shouldCancelMissedSwing() {
+        return this.isEnabled() && this.shouldCancel(this.missedSwingsCancelRate.getValue());
     }
-    private void updateCurrentTarget(EntityPlayer nextTarget, long now) {
+
+    private boolean canProcessClicks() {
+        return mc.thePlayer != null && mc.theWorld != null && !mc.thePlayer.isDead;
+    }
+
+    private ClickType classifyClick(MovingObjectPosition objectMouseOver) {
+        if (objectMouseOver == null) {
+            return ClickType.MISSED_SWING;
+        }
+        if (objectMouseOver.typeOfHit == MovingObjectType.BLOCK) {
+            return ClickType.BLOCK_INTERACTION;
+        }
+        if (objectMouseOver.typeOfHit == MovingObjectType.ENTITY) {
+            Entity entityHit = objectMouseOver.entityHit;
+            return CombatTargeting.asValidPlayer(entityHit, HIT_RANGE_SQ, this.ignoreTeammates.getValue()) != null
+                    ? ClickType.VALID_HIT : ClickType.MISSED_SWING;
+        }
+        return ClickType.MISSED_SWING;
+    }
+
+    private void cancelClick(PreAttackEvent event) {
+        if (this.fakeSwing.getValue() && mc.thePlayer != null) {
+            this.setSwinging();
+        }
+        event.setCancelled(true);
+    }
+
+    private void updateCurrentTarget(EntityPlayer nextTarget, int currentTick) {
         if (this.sameTarget(nextTarget)) {
             if (nextTarget != null) {
                 this.currentTarget = nextTarget;
-                this.getTargetState(nextTarget);
+                this.getTargetState(nextTarget, currentTick);
             }
             return;
         }
-
         this.currentTarget = nextTarget;
         if (nextTarget == null) {
             this.resetWaitFirstState();
         } else if (!this.waitFirstTracking) {
             this.waitFirstTracking = true;
-            this.waitFirstStartMs = now;
+            this.waitFirstStartTick = currentTick;
             this.waitFirstUnlocked = false;
         }
         if (nextTarget != null) {
-            this.getTargetState(nextTarget);
+            this.getTargetState(nextTarget, currentTick);
         }
     }
-    private void updateSelfDamage() {
+
+    private void updateSelfDamage(int currentTick) {
         int hurtTime = mc.thePlayer.hurtTime;
         boolean hurtAgain = hurtTime > this.lastSelfHurtTime;
         if (hurtAgain) {
             if (this.waitFirstTracking && !this.waitFirstUnlocked) {
                 this.waitFirstUnlocked = true;
             }
-            this.takingKnockback = true;
-            if (this.engagedTarget != null) {
-                TargetState state = this.getTargetState(this.engagedTarget);
+            if (!this.takingKnockback) {
+                this.takingKnockback = true;
+            }
+            if (this.currentTarget != null) {
+                TargetState state = this.getTargetState(this.currentTarget, currentTick);
                 state.firstSelfHitSeen = true;
                 state.comboCount = 0;
             }
         }
-
         if (this.takingKnockback && mc.thePlayer.onGround && !hurtAgain) {
             this.takingKnockback = false;
         }
         this.lastSelfHurtTime = hurtTime;
     }
-    private void updateTargetDamage(long now) {
-        if (this.engagedTarget == null) {
+
+    private void updateTargetDamage(int currentTick) {
+        if (this.currentTarget == null) {
             return;
         }
-        TargetState state = this.getTargetState(this.engagedTarget);
-        int targetHurtTime = this.engagedTarget.hurtTime;
+        TargetState state = this.getTargetState(this.currentTarget, currentTick);
+        int targetHurtTime = this.currentTarget.hurtTime;
         if (targetHurtTime > state.lastObservedTargetHurtTime) {
             state.comboCount++;
         }
         if (this.useServerAttackTime.getValue()) {
-            if (state.pendingServerConfirmationMs >= 0 && now - state.pendingServerConfirmationMs > SERVER_CONFIRM_TIMEOUT_MS) {
-                state.pendingServerConfirmationMs = -1;
+            if (state.pendingServerConfirmationTick >= 0
+                    && currentTick - state.pendingServerConfirmationTick > SERVER_CONFIRM_TIMEOUT_TICKS) {
+                state.pendingServerConfirmationTick = -1;
             }
-            if (state.pendingServerConfirmationMs >= 0 && targetHurtTime > state.lastObservedTargetHurtTime) {
-                state.pendingServerConfirmationMs = -1;
-                state.lastConfirmedTargetDamageMs = now;
+            if (state.pendingServerConfirmationTick >= 0 && targetHurtTime > state.lastObservedTargetHurtTime) {
+                state.pendingServerConfirmationTick = -1;
+                state.lastConfirmedTargetDamageTick = currentTick;
                 state.rawBlockMask = BLOCK_SERVER_COOLDOWN;
-                state.rawBlockStartMs = now;
+                state.rawBlockStartTick = currentTick;
             }
         }
         state.lastObservedTargetHurtTime = targetHurtTime;
     }
 
-    private int getValidHitBlockMask(TargetState state, long now) {
+    private int getValidHitBlockMask(TargetState state, int currentTick) {
         if (this.currentTarget == null) {
             return 0;
         }
@@ -305,30 +284,30 @@ public class HitSelect extends Module {
             return 0;
         }
         int blockMask = 0;
-        if (this.isWaitingForFirstHit(now)) {
+        if (this.isWaitingForFirstHit(currentTick)) {
             blockMask |= BLOCK_WAIT_FIRST;
         }
-        blockMask |= this.getBurstBlockMask(state, now);
+        blockMask |= this.getBurstBlockMask(state, currentTick);
         if (this.isCriticalsBlocked(state)) {
             blockMask |= BLOCK_CRITICALS;
         }
         return blockMask;
     }
 
-    private int getBurstBlockMask(TargetState state, long now) {
+    private int getBurstBlockMask(TargetState state, int currentTick) {
         if (this.useServerAttackTime.getValue()) {
-            long serverCooldownMs = SERVER_CONFIRM_COOLDOWN_MS + this.tradeExtensionMs(state);
-            if (state.lastConfirmedTargetDamageMs >= 0 && now - state.lastConfirmedTargetDamageMs < serverCooldownMs) {
-                return BLOCK_SERVER_COOLDOWN;
-            }
+            return state.lastConfirmedTargetDamageTick >= 0
+                    && currentTick - state.lastConfirmedTargetDamageTick < SERVER_CONFIRM_COOLDOWN_TICKS
+                    ? BLOCK_SERVER_COOLDOWN : 0;
+        }
+        if (!this.isPredictedBurstWindowActive(state, currentTick)) {
             return 0;
         }
-        return this.isPredictedBurstWindowActive(state, now) ? BLOCK_PREDICTED_BURST : 0;
+        int pauseTicks = msToTicks(this.pauseDuration.getValue());
+        return pauseTicks > 0 && currentTick - state.predictedBurstWindowStartTick < pauseTicks
+                ? BLOCK_PREDICTED_BURST : 0;
     }
 
-    private long tradeExtensionMs(TargetState state) {
-        return state.firstSelfHitSeen ? this.hitLaterInTrades.getValue() : 0L;
-    }
     private boolean isCriticalsBlocked(TargetState state) {
         if (this.mode.getValue() != 1) {
             return false;
@@ -344,16 +323,19 @@ public class HitSelect extends Module {
         }
         return !this.canCriticalHit();
     }
-    private boolean isWaitingForFirstHit(long now) {
+
+    private boolean isWaitingForFirstHit(int currentTick) {
         if (this.waitForFirstHit.getValue() <= 0
                 || this.currentTarget == null
                 || !this.waitFirstTracking
                 || this.waitFirstUnlocked
-                || this.waitFirstStartMs < 0) {
+                || this.waitFirstStartTick < 0) {
             return false;
         }
-        return now - this.waitFirstStartMs < this.waitForFirstHit.getValue();
+        int requiredTicks = msToTicks(this.waitForFirstHit.getValue());
+        return requiredTicks > 0 && currentTick - this.waitFirstStartTick < requiredTicks;
     }
+
     private boolean canCriticalHit() {
         return mc.thePlayer.fallDistance > 0.0F
                 && !mc.thePlayer.onGround
@@ -362,46 +344,50 @@ public class HitSelect extends Module {
                 && !mc.thePlayer.isPotionActive(Potion.blindness)
                 && mc.thePlayer.ridingEntity == null;
     }
+
+    private boolean isComboGateOpen(TargetState state) {
+        return this.whenOnlyCombo.getValue() <= 0 || state.comboCount >= this.whenOnlyCombo.getValue();
+    }
+
     private boolean isTakingKnockback() {
         return this.takingKnockback || mc.thePlayer.hurtTime > 0;
     }
-    private boolean applyPauseDuration(TargetState state, int blockMask, long now) {
+
+    private boolean applyPauseDuration(TargetState state, int blockMask, int currentTick) {
         if (blockMask == 0) {
             state.rawBlockMask = 0;
-            state.rawBlockStartMs = -1L;
+            state.rawBlockStartTick = -1;
             return false;
         }
         if (this.pauseDuration.getValue() <= 0) {
             state.rawBlockMask = blockMask;
-            state.rawBlockStartMs = now;
+            state.rawBlockStartTick = currentTick;
             return false;
         }
         if (blockMask != state.rawBlockMask) {
             state.rawBlockMask = blockMask;
-            state.rawBlockStartMs = now;
-        } else if (state.rawBlockStartMs < 0) {
-            state.rawBlockStartMs = now;
+            state.rawBlockStartTick = currentTick;
+        } else if (state.rawBlockStartTick < 0) {
+            state.rawBlockStartTick = currentTick;
         }
-        return now - state.rawBlockStartMs < this.pauseDuration.getValue();
+        int requiredTicks = msToTicks(this.pauseDuration.getValue());
+        return requiredTicks > 0 && currentTick - state.rawBlockStartTick < requiredTicks;
     }
-    private void recordPassedValidHit(EntityPlayer target, long now) {
+
+    private void recordPassedValidHit(EntityPlayer target, int currentTick) {
         if (target == null) {
             return;
         }
-        this.updateCurrentTarget(target, now);
-        TargetState state = this.getTargetState(target);
+        this.updateCurrentTarget(target, currentTick);
+        TargetState state = this.getTargetState(target, currentTick);
         if (this.useServerAttackTime.getValue()) {
-            state.pendingServerConfirmationMs = now;
-            state.lastConfirmedTargetDamageMs = -1L;
-            return;
-        }
-        if (!this.isPredictedBurstWindowActive(state, now)) {
-            this.startPredictedBurstWindow(state, now);
+            state.pendingServerConfirmationTick = currentTick;
+            state.lastConfirmedTargetDamageTick = -1;
+        } else if (!this.isPredictedBurstWindowActive(state, currentTick)) {
+            this.startPredictedBurstWindow(state, currentTick, HURT_WINDOW_TICKS);
         }
     }
-    public boolean shouldCancelMissedSwing() {
-        return this.isEnabled() && this.shouldCancel(this.missedSwingsCancelRate.getValue());
-    }
+
     private boolean shouldCancel(double chance) {
         if (chance <= 0.0) {
             return false;
@@ -411,29 +397,56 @@ public class HitSelect extends Module {
         }
         return Math.random() * 100.0 < chance;
     }
+
     private boolean sameTarget(EntityPlayer nextTarget) {
-        if (this.currentTarget == null || nextTarget == null) {
-            return this.currentTarget == nextTarget;
+        if (this.currentTarget != null && nextTarget != null) {
+            return this.currentTarget.getEntityId() == nextTarget.getEntityId();
         }
-        return this.currentTarget.getEntityId() == nextTarget.getEntityId();
-    }
-    private void resetWaitFirstState() {
-        this.waitFirstTracking = false;
-        this.waitFirstStartMs = -1L;
-        this.waitFirstUnlocked = false;
-    }
-    private boolean isPredictedBurstWindowActive(TargetState state, long now) {
-        if (state.predictedBurstWindowStartMs < 0) {
-            return false;
-        }
-        long effectivePauseMs = this.pauseDuration.getValue() + this.tradeExtensionMs(state);
-        return effectivePauseMs > 0 && now - state.predictedBurstWindowStartMs < effectivePauseMs;
+        return this.currentTarget == nextTarget;
     }
 
-    private void startPredictedBurstWindow(TargetState state, long startMs) {
-        state.predictedBurstWindowStartMs = startMs;
+    private void resetWaitFirstState() {
+        this.waitFirstTracking = false;
+        this.waitFirstStartTick = -1;
+        this.waitFirstUnlocked = false;
     }
-    private TargetState getTargetState(EntityPlayer target) {
+
+    private int getHurtWindowTicks(EntityPlayer target) {
+        return target != null && target.maxHurtTime > 0
+                ? Math.max(HURT_WINDOW_TICKS, target.maxHurtTime) : HURT_WINDOW_TICKS;
+    }
+
+    private boolean isPredictedBurstWindowActive(TargetState state, int currentTick) {
+        return state.predictedBurstWindowEndTick >= 0 && currentTick < state.predictedBurstWindowEndTick;
+    }
+
+    private void startPredictedBurstWindow(TargetState state, int startTick, int windowTicks) {
+        int hurtWindowTicks = Math.max(1, windowTicks);
+        state.predictedBurstWindowStartTick = startTick;
+        state.predictedBurstWindowEndTick = startTick + hurtWindowTicks;
+    }
+
+    private void clearPredictedBurstWindow(TargetState state) {
+        state.predictedBurstWindowStartTick = -1;
+        state.predictedBurstWindowEndTick = -1;
+    }
+
+    private void syncPredictedBurstWindow(TargetState state, EntityPlayer target, int currentTick) {
+        if (state.predictedBurstWindowEndTick >= 0 && currentTick >= state.predictedBurstWindowEndTick) {
+            this.clearPredictedBurstWindow(state);
+        }
+        if (target != null && target.hurtTime > 0) {
+            int hurtWindowTicks = Math.max(this.getHurtWindowTicks(target), target.hurtTime);
+            int elapsedWindowTicks = hurtWindowTicks - target.hurtTime;
+            int estimatedStartTick = currentTick - Math.max(0, elapsedWindowTicks);
+            if (!this.isPredictedBurstWindowActive(state, currentTick)
+                    || estimatedStartTick > state.predictedBurstWindowStartTick) {
+                this.startPredictedBurstWindow(state, estimatedStartTick, hurtWindowTicks);
+            }
+        }
+    }
+
+    private TargetState getTargetState(EntityPlayer target, int currentTick) {
         TargetState state = this.targetStates.get(target.getEntityId());
         if (state == null) {
             state = new TargetState();
@@ -444,6 +457,7 @@ public class HitSelect extends Module {
         }
         return state;
     }
+
     private void pruneTargetStates() {
         if (mc.theWorld == null) {
             this.targetStates.clear();
@@ -458,21 +472,55 @@ public class HitSelect extends Module {
             }
         }
     }
+
     private void resetAllState() {
         this.currentTarget = null;
-        this.engagedTarget = null;
         this.targetStates.clear();
         this.lastSelfHurtTime = 0;
         this.takingKnockback = false;
         this.resetWaitFirstState();
     }
+
+    private boolean holdingWeapon() {
+        if (mc.thePlayer == null) {
+            return false;
+        }
+        ItemStack held = mc.thePlayer.getHeldItem();
+        if (held == null) {
+            return false;
+        }
+        Item item = held.getItem();
+        return item instanceof ItemSword || item instanceof ItemTool;
+    }
+
+    private void setSwinging() {
+        int armSwingEnd = mc.thePlayer.isPotionActive(Potion.digSpeed)
+                ? 6 - (1 + mc.thePlayer.getActivePotionEffect(Potion.digSpeed).getAmplifier())
+                : (mc.thePlayer.isPotionActive(Potion.digSlowdown)
+                        ? 6 + (1 + mc.thePlayer.getActivePotionEffect(Potion.digSlowdown).getAmplifier()) * 2
+                        : 6);
+        if (!mc.thePlayer.isSwingInProgress
+                || mc.thePlayer.swingProgressInt >= armSwingEnd / 2
+                || mc.thePlayer.swingProgressInt < 0) {
+            mc.thePlayer.swingProgressInt = -1;
+            mc.thePlayer.isSwingInProgress = true;
+        }
+    }
+
+    private enum ClickType {
+        VALID_HIT,
+        BLOCK_INTERACTION,
+        MISSED_SWING
+    }
+
     private static class TargetState {
         boolean firstSelfHitSeen;
-        long lastConfirmedTargetDamageMs = -1L;
-        long pendingServerConfirmationMs = -1L;
-        long predictedBurstWindowStartMs = -1L;
+        int lastConfirmedTargetDamageTick = -1;
+        int pendingServerConfirmationTick = -1;
+        int predictedBurstWindowStartTick = -1;
+        int predictedBurstWindowEndTick = -1;
         int lastObservedTargetHurtTime;
-        long rawBlockStartMs = -1L;
+        int rawBlockStartTick = -1;
         int rawBlockMask;
         int comboCount;
     }

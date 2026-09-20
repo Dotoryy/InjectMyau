@@ -7,6 +7,7 @@ import java.util.function.BooleanSupplier;
 
 public class ModeProperty extends Property<Integer> {
     private final String[] modes;
+    private final java.util.Map<String, Integer> aliases = new java.util.HashMap<>();
 
     public ModeProperty(String name, Integer value, String[] modes) {
         this(name, value, modes, null);
@@ -20,6 +21,15 @@ public class ModeProperty extends Property<Integer> {
     @Override
     public String getValuePrompt() {
         return String.join(", ", this.modes);
+    }
+
+    public ModeProperty withAlias(String legacy, int index) {
+        this.aliases.put(normalize(legacy), index);
+        return this;
+    }
+
+    private static String normalize(String value) {
+        return value.replace("_", "").toLowerCase(java.util.Locale.ROOT);
     }
 
     public String[] getModes() {
@@ -46,7 +56,8 @@ public class ModeProperty extends Property<Integer> {
                 return this.setValue(i);
             }
         }
-        return false;
+        Integer alias = this.aliases.get(normalize(string));
+        return alias != null && this.setValue(alias);
     }
     @Override
     public boolean read(JsonObject jsonObject) {

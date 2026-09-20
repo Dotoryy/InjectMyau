@@ -12,15 +12,17 @@ import myau.events.PacketEvent;
 import myau.events.PlayerUpdateEvent;
 import myau.events.PrePlayerInteractEvent;
 import myau.events.RightClickMouseEvent;
+import myau.events.PreSlowDownEvent;
+import myau.events.SprintEvent;
 import myau.events.StrafeEvent;
 import myau.events.UpdateEvent;
 import myau.lag.api.EnumLagDirection;
 import myau.lag.api.LagRequest;
 import myau.lag.timeout.ModuleBackedTimeout;
+import myau.management.SlotComponent;
 import myau.module.Module;
 import myau.util.KeyBindUtil;
 import myau.access.AccessorEntity;
-import myau.access.AccessorPlayerControllerMP;
 import myau.util.BlockUtil;
 import myau.util.MoveUtil;
 import myau.util.MovementTicks;
@@ -29,6 +31,7 @@ import myau.util.PacketUtil;
 import myau.util.PlayerUtil;
 import myau.util.TeamUtil;
 import myau.property.properties.BooleanProperty;
+import myau.property.properties.IntProperty;
 import myau.property.properties.FloatProperty;
 import myau.property.properties.PercentProperty;
 import myau.property.properties.ModeProperty;
@@ -36,8 +39,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.passive.EntityVillager;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemBow;
+import net.minecraft.item.ItemFood;
+import net.minecraft.item.ItemPotion;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSword;
 import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.client.C0FPacketConfirmTransaction;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
@@ -50,6 +59,8 @@ public class NoSlow extends Module {
     private static final int SWORD_MATRIX = 4;
     private static final int ITEM_GRIM_30 = 3;
     private static final int ITEM_MATRIX = 4;
+    private static final int ITEM_WATCHDOG_PREDICTION = 5;
+    private static final int PREDICTION_ROTATION_PRIORITY = 2;
     private static final int WATCHDOG_LAG_START_TICKS = 1;
     private static final float WATCHDOG_ANIMATION_DEFAULT = 150.0F;
     private static final double MATRIX_GROUND_SPEED = 0.0265;
@@ -63,26 +74,49 @@ public class NoSlow extends Module {
     public final FloatProperty watchdogAnimation = new FloatProperty("watchdog-block-animation",
             WATCHDOG_ANIMATION_DEFAULT, 0.0F, 500.0F, 50.0F,
             () -> this.swordMode.getValue() == SWORD_WATCHDOG_LAG);
-    public final ModeProperty foodMode = new ModeProperty("food-mode", 0, new String[]{"NONE", "VANILLA", "FLOAT", "GRIM_30", "MATRIX"});
+    public final ModeProperty foodMode = new ModeProperty("food-mode", 0,
+            new String[]{"NONE", "VANILLA", "FLOAT", "GRIM_30", "MATRIX", "WATCHDOG_PREDICTION"});
     public final PercentProperty foodMotion = new PercentProperty("food-motion", 100,
-            () -> this.foodMode.getValue() != 0 && this.foodMode.getValue() != ITEM_MATRIX);
+            () -> this.foodMode.getValue() != 0 && this.foodMode.getValue() != ITEM_MATRIX
+                    && this.foodMode.getValue() != ITEM_WATCHDOG_PREDICTION);
     public final BooleanProperty foodSprint = new BooleanProperty("food-sprint", true, () -> this.foodMode.getValue() != 0);
-    public final ModeProperty bowMode = new ModeProperty("bow-mode", 0, new String[]{"NONE", "VANILLA", "FLOAT", "GRIM_30", "MATRIX"});
+    public final ModeProperty bowMode = new ModeProperty("bow-mode", 0,
+            new String[]{"NONE", "VANILLA", "FLOAT", "GRIM_30", "MATRIX", "WATCHDOG_PREDICTION"});
     public final PercentProperty bowMotion = new PercentProperty("bow-motion", 100,
-            () -> this.bowMode.getValue() != 0 && this.bowMode.getValue() != ITEM_MATRIX);
+            () -> this.bowMode.getValue() != 0 && this.bowMode.getValue() != ITEM_MATRIX
+                    && this.bowMode.getValue() != ITEM_WATCHDOG_PREDICTION);
     public final BooleanProperty bowSprint = new BooleanProperty("bow-sprint", true, () -> this.bowMode.getValue() != 0);
+    public final BooleanProperty swordPrediction = new BooleanProperty("sword-prediction", false,
+            () -> this.swordMode.getValue() == SWORD_WATCHDOG_LAG);
+    public final IntProperty maxPingSpoof = new IntProperty("max-ping-spoof", 8, 0, 30,
+            () -> this.isPredictionSelected());
+    public final IntProperty whenToFinishEating = new IntProperty("when-to-finish-eating", 30, 20, 36,
+            () -> this.isPredictionSelected());
+    public final BooleanProperty nonBlinkSpeedBypass = new BooleanProperty("non-blink-speed-bypass", true,
+            () -> this.isPredictionSelected());
     public final BooleanProperty grimHeypixel = new BooleanProperty("grim-heypixel", false,
             () -> this.isGrim30Selected());
+    private boolean predictionWasUsingItem = false;
+    private int predictionUsingTicks = 0;
+    private LagRequest predictionBlink = null;
     private static final int GRIM_ROTATION_PRIORITY = 2;
     private LagRequest watchdogLag = null;
     private boolean releasedThisTick = false;
     private long animationEndMs = 0L;
     public NoSlow() {
-        super("No Slow", false);
+        super("No Slowdown", false);
+    }
+
+    @Override
+    public String[] getLegacyNames() {
+        return new String[]{"No Slow"};
     }
     @Override
     public void onDisabled() {
         this.releaseWatchdogLag();
+        this.releasePredictionBlink();
+        this.predictionUsingTicks = 0;
+        this.predictionWasUsingItem = false;
         this.releasedThisTick = false;
         this.animationEndMs = 0L;
     }
@@ -120,15 +154,67 @@ public class NoSlow extends Module {
     }
     public boolean isSwordActive() {
         if (this.swordMode.getValue() == SWORD_WATCHDOG_LAG) {
+            if (this.swordPrediction.getValue()) {
+                return ItemUtil.isHoldingSword();
+            }
             return this.watchdogLag != null && ItemUtil.isHoldingSword();
         }
         return this.swordMode.getValue() != 0 && ItemUtil.isHoldingSword();
     }
     public boolean isFoodActive() {
+        if (this.foodMode.getValue() == ITEM_WATCHDOG_PREDICTION) {
+            return ItemUtil.isEating() && this.isPredictionBlinking();
+        }
         return this.foodMode.getValue() != 0 && ItemUtil.isEating();
     }
     public boolean isBowActive() {
+        if (this.bowMode.getValue() == ITEM_WATCHDOG_PREDICTION) {
+            return ItemUtil.isUsingBow() && this.isPredictionBlinking();
+        }
         return this.bowMode.getValue() != 0 && ItemUtil.isUsingBow();
+    }
+
+    private boolean isPredictionBlinking() {
+        return this.predictionUsingTicks > this.maxPingSpoof.getValue();
+    }
+
+    public boolean isPredictionSelected() {
+        return this.foodMode.getValue() == ITEM_WATCHDOG_PREDICTION
+                || this.bowMode.getValue() == ITEM_WATCHDOG_PREDICTION
+                || this.swordMode.getValue() == SWORD_WATCHDOG_LAG && this.swordPrediction.getValue();
+    }
+
+    private boolean isPredictionCountTarget() {
+        ItemStack held = mc.thePlayer.getHeldItem();
+        if (held == null) {
+            return false;
+        }
+        Item item = held.getItem();
+        if (item instanceof ItemSword) {
+            return false;
+        }
+        if (this.foodMode.getValue() == ITEM_WATCHDOG_PREDICTION && mc.thePlayer.isEating()
+                && (item instanceof ItemFood
+                        || item instanceof ItemPotion && !ItemPotion.isSplash(held.getMetadata()))) {
+            return true;
+        }
+        return item instanceof ItemBow && this.bowMode.getValue() == ITEM_WATCHDOG_PREDICTION;
+    }
+
+    private void startPredictionBlink() {
+        if (this.predictionBlink != null) {
+            return;
+        }
+        this.predictionBlink = new LagRequest(EnumLagDirection.ONLY_OUTBOUND, new ModuleBackedTimeout(this));
+        Myau.lagHandler.requestLag(this.predictionBlink);
+    }
+
+    private void releasePredictionBlink() {
+        if (this.predictionBlink == null) {
+            return;
+        }
+        this.predictionBlink.getTimeout().forceTimeOut();
+        this.predictionBlink = null;
     }
 
     public boolean isFloatMode() {
@@ -178,9 +264,13 @@ public class NoSlow extends Module {
             return this.swordMode.getValue() == SWORD_WATCHDOG_LAG || this.swordMode.getValue() == SWORD_MATRIX
                     ? 100 : this.swordMotion.getValue();
         } else if (ItemUtil.isEating()) {
-            return this.foodMode.getValue() == ITEM_MATRIX ? 100 : this.foodMotion.getValue();
+            return this.foodMode.getValue() == ITEM_MATRIX
+                    || this.foodMode.getValue() == ITEM_WATCHDOG_PREDICTION
+                    ? 100 : this.foodMotion.getValue();
         } else if (ItemUtil.isUsingBow()) {
-            return this.bowMode.getValue() == ITEM_MATRIX ? 100 : this.bowMotion.getValue();
+            return this.bowMode.getValue() == ITEM_MATRIX
+                    || this.bowMode.getValue() == ITEM_WATCHDOG_PREDICTION
+                    ? 100 : this.bowMotion.getValue();
         } else {
             return 100;
         }
@@ -254,10 +344,6 @@ public class NoSlow extends Module {
                     : System.currentTimeMillis() + (long) this.watchdogAnimation.getValue().floatValue();
             KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
             if (mc.thePlayer.isUsingItem()) {
-                AccessorPlayerControllerMP.callSyncCurrentPlayItem(mc.playerController);
-                PacketUtil.sendPacket(new C07PacketPlayerDigging(
-                        C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
-                mc.thePlayer.stopUsingItem();
                 this.releasedThisTick = true;
             }
         }
@@ -283,6 +369,100 @@ public class NoSlow extends Module {
         }
         this.watchdogLag.getTimeout().forceTimeOut();
         this.watchdogLag = null;
+    }
+
+    @EventTarget
+    public void onPredictionPlayerUpdate(PlayerUpdateEvent event) {
+        if (!this.isEnabled() || mc.thePlayer == null || mc.theWorld == null) {
+            return;
+        }
+        if (!this.isPredictionSelected()) {
+            this.predictionUsingTicks = 0;
+            this.predictionWasUsingItem = false;
+            this.releasePredictionBlink();
+            return;
+        }
+        if (mc.thePlayer.getCurrentEquippedItem() == null) {
+            return;
+        }
+        if (mc.thePlayer.isUsingItem()) {
+            if (this.isPredictionCountTarget()) {
+                this.predictionUsingTicks++;
+                if (this.predictionUsingTicks > this.maxPingSpoof.getValue()) {
+                    this.startPredictionBlink();
+                }
+            }
+            this.predictionWasUsingItem = true;
+        } else if (this.predictionWasUsingItem) {
+            this.predictionUsingTicks = 0;
+            this.predictionWasUsingItem = false;
+            this.releasePredictionBlink();
+        }
+        if (this.predictionUsingTicks > this.whenToFinishEating.getValue()) {
+            KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
+        }
+    }
+
+    @EventTarget
+    public void onPredictionSprint(SprintEvent event) {
+        if (!this.isEnabled() || !this.isPredictionSelected() || mc.thePlayer == null) {
+            return;
+        }
+        if (mc.thePlayer.isUsingItem() && mc.thePlayer.moveForward > 0.0F
+                && this.nonBlinkSpeedBypass.getValue()
+                && this.predictionUsingTicks <= this.maxPingSpoof.getValue()) {
+            mc.thePlayer.setSprinting(true);
+        }
+    }
+
+    @EventTarget(Priority.HIGH)
+    public void onPredictionUpdate(UpdateEvent event) {
+        if (event.getType() != EventType.PRE) {
+            return;
+        }
+        if (!this.isEnabled() || !this.isPredictionSelected() || mc.thePlayer == null) {
+            return;
+        }
+        KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
+        boolean attacking = killAura != null && killAura.isEnabled() && killAura.getTarget() != null;
+        if (!attacking
+                && (!mc.thePlayer.onGround || MovementTicks.ground() > 2)
+                && !mc.gameSettings.keyBindRight.isKeyDown()
+                && !mc.gameSettings.keyBindLeft.isKeyDown()
+                && mc.thePlayer.ticksExisted > 5
+                && mc.thePlayer.isUsingItem()
+                && !ItemUtil.isHoldingSword()
+                && !ItemUtil.isUsingBow()) {
+            float spoofYaw = mc.thePlayer.rotationYaw + 45.0F;
+            event.setRotation(spoofYaw, mc.thePlayer.rotationPitch, PREDICTION_ROTATION_PRIORITY);
+            event.setPervRotation(spoofYaw, PREDICTION_ROTATION_PRIORITY);
+        }
+    }
+
+    @EventTarget
+    public void onPreSlowDown(PreSlowDownEvent event) {
+        if (!this.isEnabled() || mc.thePlayer == null) {
+            return;
+        }
+        if (this.swordMode.getValue() == SWORD_WATCHDOG_LAG && this.swordPrediction.getValue()
+                && mc.thePlayer.isUsingItem() && ItemUtil.isHoldingSword()) {
+            PacketUtil.sendPacket(new C07PacketPlayerDigging(
+                    C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN,
+                    EnumFacing.DOWN));
+            this.dispatchHeldPackets();
+            PacketUtil.sendPacket(
+                    new C08PacketPlayerBlockPlacement(SlotComponent.getItemStack()));
+            event.setCancelled(true);
+        }
+        if (this.isAnyActive()) {
+            event.setCancelled(true);
+        }
+    }
+
+    private void dispatchHeldPackets() {
+        this.releaseWatchdogLag();
+        this.releasePredictionBlink();
+        Myau.lagHandler.releaseExpiredPackets(EnumLagDirection.OUTBOUND, 0L);
     }
 
     @EventTarget

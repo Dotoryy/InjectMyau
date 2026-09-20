@@ -58,8 +58,10 @@ public abstract class MixinEntityRenderer {
             }
             KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
             NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
+            Autoblock autoblock = (Autoblock) Myau.moduleManager.modules.get(Autoblock.class);
             if (killAura.isEnabled() && killAura.isBlocking()
-                    || noSlow != null && noSlow.isForcingBlockAnimation()) {
+                    || noSlow != null && noSlow.isForcingBlockAnimation()
+                    || autoblock != null && autoblock.isForcingBlockAnimation()) {
                 this.using = new Box<>(((IAccessorEntityPlayer) this.mc.thePlayer).getItemInUse());
                 ((IAccessorEntityPlayer) this.mc.thePlayer).setItemInUse(this.mc.thePlayer.inventory.getCurrentItem());
                 this.useCount = new Box<>(((IAccessorEntityPlayer) this.mc.thePlayer).getItemInUseCount());

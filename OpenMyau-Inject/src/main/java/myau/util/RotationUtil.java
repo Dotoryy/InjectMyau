@@ -26,6 +26,9 @@ public class RotationUtil {
     }
 
     public static float smoothAngle(float angle, float smoothFactor) {
+        if (smoothFactor <= 0.0f) {
+            return angle;
+        }
         return angle * (0.5f + 0.5f * (1.0f - Math.max(0.0f, Math.min(1.0f, smoothFactor + RandomUtil.nextFloat(-0.1f, 0.1f)))));
     }
 

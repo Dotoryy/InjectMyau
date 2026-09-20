@@ -23,6 +23,7 @@ import myau.events.PacketEvent;
 import myau.management.blockage.InboundNetworkBlockage;
 import myau.management.blockage.OutboundNetworkBlockage;
 import myau.module.modules.NoHitDelay;
+import myau.module.modules.NoRotate;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.INetHandlerPlayClient;
 import net.minecraft.client.Minecraft;
@@ -38,6 +39,26 @@ public final class Callbacks {
     private static boolean lastSynthetic;
     private Callbacks() {
     }
+    public static void teleportRotation(net.minecraft.entity.player.EntityPlayer player,
+            double x, double y, double z, float yaw, float pitch) {
+        float useYaw = yaw;
+        float usePitch = pitch;
+        try {
+            if (Bootstrap.isStarted()) {
+                NoRotate noRotate = (NoRotate) Myau.moduleManager.modules.get(NoRotate.class);
+                float[] override = noRotate == null ? null
+                        : noRotate.onServerTeleport(x, y, z, yaw, pitch);
+                if (override != null) {
+                    useYaw = override[0];
+                    usePitch = override[1];
+                }
+            }
+        } catch (Throwable swallowed) {
+            Log.swallowed(swallowed);
+        }
+        player.setPositionAndRotation(x, y, z, useYaw, usePitch);
+    }
+
     public static void tickPre() {
         try {
 

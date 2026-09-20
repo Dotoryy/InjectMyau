@@ -5,7 +5,9 @@ import myau.event.types.EventType;
 import myau.events.LoadWorldEvent;
 import myau.events.PacketEvent;
 import myau.module.Module;
+import myau.access.AccessorC03PacketPlayer;
 import myau.property.properties.BooleanProperty;
+import myau.property.properties.ModeProperty;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.client.C03PacketPlayer.C06PacketPlayerPosLook;
@@ -17,7 +19,19 @@ public class NoRotate extends Module {
     private static final double TELEPORT_DISTANCE_SQ = 100.0;
     private static final long PENDING_LIFETIME_MS = 1000L;
     private static final double POSITION_EPSILON = 1.0E-4;
-    public final BooleanProperty ignoreTeleports = new BooleanProperty("ignore-teleports", true);
+    private static final int MODE_TICK = 0;
+    private static final int MODE_EDIT = 1;
+    public final ModeProperty mode =
+            new ModeProperty("mode", MODE_TICK, new String[]{"TICK", "EDIT"});
+    public final BooleanProperty ignoreTeleports = new BooleanProperty("ignore-teleports", true,
+            () -> this.mode.getValue() == MODE_TICK);
+    private float editYaw;
+    private float editPitch;
+    private boolean editPending;
+    private long editPendingSince;
+    private double editX;
+    private double editY;
+    private double editZ;
     private boolean pending;
     private long pendingSince;
     private double pendingX;
@@ -30,7 +44,7 @@ public class NoRotate extends Module {
     }
     @Override
     public String[] getSuffix() {
-        return new String[]{"Tick"};
+        return new String[]{this.mode.getValue() == MODE_EDIT ? "Edit" : "Tick"};
     }
     @EventTarget
     public void onPacket(PacketEvent event) {
@@ -38,14 +52,51 @@ public class NoRotate extends Module {
             return;
         }
         if (event.getType() == EventType.RECEIVE) {
-            if (event.getPacket() instanceof S08PacketPlayerPosLook) {
+            if (event.getPacket() instanceof S08PacketPlayerPosLook
+                    && this.mode.getValue() != MODE_EDIT) {
                 this.onTeleport((S08PacketPlayerPosLook) event.getPacket());
             }
         } else if (event.getType() == EventType.SEND) {
             if (event.getPacket() instanceof C06PacketPlayerPosLook) {
-                this.onConfirmation((C06PacketPlayerPosLook) event.getPacket());
+                if (this.mode.getValue() == MODE_EDIT) {
+                    this.onEditConfirmation((C06PacketPlayerPosLook) event.getPacket());
+                } else {
+                    this.onConfirmation((C06PacketPlayerPosLook) event.getPacket());
+                }
             }
         }
+    }
+
+    public float[] onServerTeleport(double x, double y, double z, float yaw, float pitch) {
+        if (!this.isEnabled() || this.mode.getValue() != MODE_EDIT || mc.thePlayer == null) {
+            return null;
+        }
+        this.editYaw = yaw;
+        this.editPitch = pitch;
+        this.editX = x;
+        this.editY = y;
+        this.editZ = z;
+        this.editPending = true;
+        this.editPendingSince = System.currentTimeMillis();
+        return new float[]{mc.thePlayer.rotationYaw, mc.thePlayer.rotationPitch};
+    }
+
+    private void onEditConfirmation(C06PacketPlayerPosLook packet) {
+        if (!this.editPending) {
+            return;
+        }
+        if (System.currentTimeMillis() - this.editPendingSince > PENDING_LIFETIME_MS) {
+            this.editPending = false;
+            return;
+        }
+        if (Math.abs(packet.getPositionX() - this.editX) >= POSITION_EPSILON
+                || Math.abs(packet.getPositionY() - this.editY) >= POSITION_EPSILON
+                || Math.abs(packet.getPositionZ() - this.editZ) >= POSITION_EPSILON) {
+            return;
+        }
+        AccessorC03PacketPlayer.setYaw(packet, this.editYaw);
+        AccessorC03PacketPlayer.setPitch(packet, this.editPitch);
+        this.editPending = false;
     }
 
     private void onTeleport(S08PacketPlayerPosLook packet) {
@@ -105,9 +156,11 @@ public class NoRotate extends Module {
     @EventTarget
     public void onLoadWorld(LoadWorldEvent event) {
         this.pending = false;
+        this.editPending = false;
     }
     @Override
     public void onDisabled() {
         this.pending = false;
+        this.editPending = false;
     }
 }

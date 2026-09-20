@@ -38,6 +38,10 @@ import java.util.Set;
 public final class HookTransformer implements ClassFileTransformer {
     private final Map<String, String> internalToMcp = new HashMap<String, String>();
     private final Set<String> applied = new HashSet<String>();
+    private final Set<String> appliedKeys = new HashSet<String>();
+    private final java.util.List<String> failures =
+            java.util.Collections.synchronizedList(new ArrayList<String>());
+    private final Set<String> patchedOwners = new HashSet<String>();
     private final java.util.concurrent.ConcurrentLinkedQueue<String> log =
             new java.util.concurrent.ConcurrentLinkedQueue<String>();
     private final List<Class<?>> targets = new ArrayList<Class<?>>();
@@ -116,6 +120,25 @@ public final class HookTransformer implements ClassFileTransformer {
         }
         return taken;
     }
+    public Set<String> appliedKeys() {
+        return new HashSet<String>(appliedKeys);
+    }
+
+    public Set<String> patchedOwners() {
+        return new HashSet<String>(patchedOwners);
+    }
+
+    public java.util.List<String> failures() {
+        synchronized (failures) {
+            return new ArrayList<String>(failures);
+        }
+    }
+
+    private void fail(String message) {
+        failures.add(message);
+        log.offer(message);
+    }
+
     public boolean hasLog() {
         return !log.isEmpty();
     }
@@ -141,7 +164,7 @@ public final class HookTransformer implements ClassFileTransformer {
             for (HookRegistry.Hook hook : hooks) {
                 MethodNode target = findMethod(node, hook.nameOwner, hook);
                 if (target == null) {
-                    log.offer("no method " + mcp + "." + hook.method);
+                    fail("no method " + mcp + "." + hook.method);
                     continue;
                 }
                 if (!cancellableHere(hook)) {
@@ -163,12 +186,13 @@ public final class HookTransformer implements ClassFileTransformer {
                     }
                 }
                 if (placed == 0) {
-                    log.offer("no insertion point for " + mcp + "." + hook.method
+                    fail("no insertion point for " + mcp + "." + hook.method
                             + " @" + hook.position);
                     continue;
                 }
                 installed++;
                 applied.add(mcp + "." + hook.method);
+                appliedKeys.add(HookRegistry.keyOf(hook));
             }
             if (installed == 0) {
                 return null;
@@ -176,10 +200,11 @@ public final class HookTransformer implements ClassFileTransformer {
 
             ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
             node.accept(writer);
+            patchedOwners.add(mcp);
             log.offer("patched " + mcp + " (" + installed + "/" + hooks.size() + ")");
             return writer.toByteArray();
         } catch (Throwable t) {
-            log.offer("FAILED " + mcp + ": " + t);
+            fail("FAILED " + mcp + ": " + t);
             return null;
         }
     }

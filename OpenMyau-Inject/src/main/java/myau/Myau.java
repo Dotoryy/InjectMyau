@@ -115,6 +115,7 @@ public class Myau {
         EventManager.register(lagManager);
         EventManager.register(new BadPacketsUtil());
         EventManager.register(new MovementTicks());
+        EventManager.register(new myau.management.SlotComponent());
         EventManager.register(new ServerPing());
         EventManager.register(moduleManager);
         EventManager.register(commandManager);
@@ -215,6 +216,7 @@ public class Myau {
         commandManager.commands.add(new DenickCommand());
         commandManager.commands.add(new FriendCommand());
         commandManager.commands.add(new HelpCommand());
+        commandManager.commands.add(new HooksCommand());
         commandManager.commands.add(new HideCommand());
         commandManager.commands.add(new IgnCommand());
         commandManager.commands.add(new ItemCommand());

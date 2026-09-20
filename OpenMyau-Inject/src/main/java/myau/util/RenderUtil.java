@@ -101,6 +101,30 @@ public class RenderUtil {
         }
     }
 
+    public static void renderItemPlain(ItemStack itemStack, int x, int y) {
+        ItemStack display = itemStack;
+        if (itemStack.hasTagCompound() && itemStack.getTagCompound().hasKey("ench")) {
+            display = itemStack.copy();
+            display.getTagCompound().removeTag("ench");
+        }
+        GlStateManager.pushMatrix();
+        GlStateManager.depthMask(true);
+        GlStateManager.clear(256);
+        RenderHelper.enableGUIStandardItemLighting();
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(1.0f, 1.0f, -0.01f);
+        RenderUtil.mc.getRenderItem().zLevel = -150.0f;
+        mc.getRenderItem().renderItemAndEffectIntoGUI(display, x, y);
+        RenderUtil.mc.getRenderItem().zLevel = 0.0f;
+        GlStateManager.popMatrix();
+        RenderHelper.disableStandardItemLighting();
+        GlStateManager.enableAlpha();
+        GlStateManager.disableBlend();
+        GlStateManager.enableTexture2D();
+        GlStateManager.popMatrix();
+    }
+
     public static void renderItemInGUI(ItemStack itemStack, int x, int y) {
         GlStateManager.pushMatrix();
         GlStateManager.depthMask(true);

@@ -12,6 +12,13 @@ import myau.util.shader.BlurUtils;
 import myau.util.shader.RoundedShader;
 import myau.ui.clickgui.GuiRender;
 import myau.util.RenderUtil;
+import myau.util.StencilUtil;
+import myau.access.AccessorMinecraft;
+import myau.util.font.MsdfAtlas;
+import myau.util.font.Fonts;
+import myau.util.font.MsdfFontRenderer;
+import myau.util.font.RavenFontRenderer;
+import myau.util.font.MsdfShader;
 import myau.util.TeamUtil;
 import myau.util.TimerUtil;
 import myau.util.animation.Animation;
@@ -29,8 +36,20 @@ import net.minecraft.client.network.NetworkPlayerInfo;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.SharedMonsterAttributes;
+import net.minecraft.entity.ai.attributes.AttributeModifier;
 import net.minecraft.entity.item.EntityArmorStand;
 import net.minecraft.entity.player.EntityPlayer;
+import com.google.common.collect.Multimap;
+import net.minecraft.enchantment.Enchantment;
+import net.minecraft.enchantment.EnchantmentHelper;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSword;
+import net.minecraft.item.ItemTool;
+import net.minecraft.potion.Potion;
+import net.minecraft.potion.PotionEffect;
+import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.network.play.client.C02PacketUseEntity;
 import net.minecraft.network.play.client.C02PacketUseEntity.Action;
 import net.minecraft.util.ResourceLocation;
@@ -39,12 +58,19 @@ import org.lwjgl.opengl.GL11;
 import java.awt.*;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
+import java.util.Collection;
 import java.util.Locale;
 
 public class TargetHUD extends Module {
     private static final int MODE_RAVEN = 1;
     private static final int MODE_ASTOLFO = 2;
     private static final int MODE_NOVOLINE = 3;
+    private static final int MODE_OLD_ATMOSPHERE = 4;
+    private static final int MODE_ATMOSPHERE = 5;
+    private static final int MODE_ADJUST = 6;
+    private static final int MODE_BMS = 7;
+    private static final int MODE_MODERN = 8;
+    private static final float VANTA_SCALE = 1.15F;
     private static final float NOVO_HEIGHT = 42.0F;
     private static final float NOVO_BASE_WIDTH = 74.0F;
     private static final float NOVO_HEAD = 40.0F;
@@ -96,6 +122,16 @@ public class TargetHUD extends Module {
 
     private static final float RAVEN_RADIUS = 10.0F;
     private static final float RAVEN_MODERN_RADIUS = 8.0F;
+    private static final int BMS_BLOOM_PASSES = 3;
+    private static final float BMS_BLOOM_RADIUS = 2.0F;
+    private static final int BMS_BLUR_PASSES = 2;
+    private static final float BMS_BLUR_RADIUS = 3.0F;
+    private static final float BMS_HEAD_RADIUS = 3.0F;
+    private static final float BMS_PANEL_RADIUS = 6.0F;
+    private static final long BMS_ADVANTAGE_CACHE_MS = 200L;
+    private static final Color BMS_WINNING = new Color(85, 255, 85);
+    private static final Color BMS_LOSING = new Color(255, 85, 85);
+    private static final Color BMS_DRAWING = new Color(255, 255, 85);
     private static final int RAVEN_BLOOM_PASSES = 3;
     private static final float RAVEN_BLOOM_RADIUS = 2.0F;
     private static final int RAVEN_BLUR_PASSES = 2;
@@ -115,8 +151,30 @@ public class TargetHUD extends Module {
     private final Animation novoOpen =
             new DecelerateAnimation(ASTOLFO_OPEN_MS, ASTOLFO_OPEN_ENDPOINT, Direction.BACKWARDS);
     private EntityLivingBase novoTarget = null;
+    private EntityLivingBase vantaBarTarget = null;
+    private float vantaMainRatio = 0.0F;
+    private float vantaGhostRatio = 0.0F;
+    private long vantaFrameMs = 0L;
+    private MsdfFontRenderer vantaNameFont;
+    private MsdfFontRenderer vantaSmallFont;
+    private MsdfFontRenderer vantaAdjustNameFont;
+    private MsdfFontRenderer vantaAdjustSmallFont;
+    private RavenFontRenderer bmsFont;
+    private RavenFontRenderer modernLightFont;
+    private RavenFontRenderer modernMediumFont;
+    private EntityLivingBase modernTarget;
+    private double modernRaw = 0.0;
+    private double modernHealthValue = 0.0;
+    private long modernFrameMs = 0L;
+    private long bmsAdvantageTime = 0L;
+    private float bmsAdvantageValue = 0.0F;
+    private EntityLivingBase bmsTarget;
+    private double bmsRaw = 0.0;
+    private double bmsHealthValue = 0.0;
+    private long bmsFrameMs = 0L;
     public final ModeProperty mode = new ModeProperty("mode", 0,
-            new String[]{"MYAU", "RAVEN", "ASTOLFO", "NOVOLINE"});
+            new String[]{"MYAU", "RAVEN", "ASTOLFO", "NOVOLINE", "OLD_ATMOSPHERE", "ATMOSPHERE", "ADJUST",
+                    "BMS", "MODERN"});
     public final ModeProperty ravenStyle = new ModeProperty("raven-style", 0, new String[]{"MODERN", "LEGACY"},
             () -> this.mode.getValue() == MODE_RAVEN);
     public final ModeProperty color = new ModeProperty("color", 0, new String[]{"DEFAULT", "HUD"});
@@ -204,6 +262,26 @@ public class TargetHUD extends Module {
                     this.novoTarget = this.target;
                     this.novoOpen.setDirection(Direction.FORWARDS);
                     this.renderNovoline(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_OLD_ATMOSPHERE) {
+                    this.renderOldAtmosphere(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_ATMOSPHERE) {
+                    this.renderAtmosphere(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_ADJUST) {
+                    this.renderAdjust(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_BMS) {
+                    this.renderBms(this.target);
+                    return;
+                }
+                if (this.mode.getValue() == MODE_MODERN) {
+                    this.renderModern(this.target);
                     return;
                 }
                 if (!this.animations.getValue() || this.animTimer.hasTimeElapsed(150L)) {
@@ -531,6 +609,670 @@ public class TargetHUD extends Module {
                 applyOpacity(first, textAlpha).getRGB());
         GlStateManager.popMatrix();
         mc.fontRendererObj.setUnicodeFlag(previousUnicode);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private float vantaScale() {
+        return this.scale.getValue() * VANTA_SCALE;
+    }
+
+    private MsdfFontRenderer tahoma(float size) {
+        return this.msdf("Tahoma", size);
+    }
+
+    private MsdfFontRenderer msdf(String name, float size) {
+        MsdfAtlas atlas = MsdfShader.isSupported() ? MsdfAtlas.get(name) : null;
+        return atlas == null ? null : new MsdfFontRenderer(atlas, size);
+    }
+
+    private void vantaText(MsdfFontRenderer font, String text, float x, float y, Color color, boolean shadow) {
+        if (font != null) {
+            font.drawString(text, x, y, color.getRGB(), shadow);
+        } else {
+            mc.fontRendererObj.drawString(text, x, y, color.getRGB(), shadow);
+        }
+    }
+
+    private float vantaTextWidth(MsdfFontRenderer font, String text) {
+        return font != null ? font.getStringWidth(text) : mc.fontRendererObj.getStringWidth(text);
+    }
+
+    private float vantaTextHeight(MsdfFontRenderer font) {
+        return font != null ? font.getFontHeight() : mc.fontRendererObj.FONT_HEIGHT;
+    }
+
+    private Color vantaDamageTint(EntityLivingBase target) {
+        float partial = AccessorMinecraft.getTimer(mc).renderPartialTicks;
+        float hurt = Math.max(0.0F, Math.min(target.hurtTime == 0 ? 0.0F
+                : (target.hurtTime - partial) * 0.3F, 1.0F));
+        int greenBlue = (int) (255.0F + hurt * (171.0F - 255.0F));
+        return new Color(255, greenBlue, greenBlue);
+    }
+
+    private void vantaHead(EntityLivingBase target, float x, float y, float size, Color tint) {
+        if (!(target instanceof EntityPlayer) || this.headTexture == null) {
+            return;
+        }
+        GlStateManager.color(tint.getRed() / 255.0F, tint.getGreen() / 255.0F, tint.getBlue() / 255.0F, 1.0F);
+        mc.getTextureManager().bindTexture(this.headTexture);
+        Gui.drawScaledCustomSizeModalRect((int) x, (int) y, 8.0F, 8.0F, 8, 8, (int) size, (int) size, 64.0F, 64.0F);
+        Gui.drawScaledCustomSizeModalRect((int) x, (int) y, 40.0F, 8.0F, 8, 8, (int) size, (int) size, 64.0F, 64.0F);
+        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+    }
+
+    private void vantaItem(ItemStack itemStack, float x, float y, float scale) {
+        if (itemStack == null) {
+            return;
+        }
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(x, y, 0.0F);
+        GlStateManager.scale(scale, scale, 1.0F);
+        RenderUtil.renderItemPlain(itemStack, 0, 0);
+        GlStateManager.popMatrix();
+    }
+
+    private float vantaBarWidth(EntityLivingBase target, float barMax, boolean ghost) {
+        float ratio = Math.min(Math.max(target.getHealth() / Math.max(1.0F, target.getMaxHealth()), 0.0F), 1.0F);
+        long now = System.currentTimeMillis();
+        float dt = this.vantaFrameMs == 0L ? 0.0F : Math.min(now - this.vantaFrameMs, 100L);
+        this.vantaFrameMs = now;
+        if (target != this.vantaBarTarget || !this.animations.getValue()) {
+            this.vantaBarTarget = target;
+            this.vantaMainRatio = ratio;
+            this.vantaGhostRatio = ratio;
+        } else {
+            this.vantaMainRatio += (ratio - this.vantaMainRatio) * Math.min(1.0F, dt / 150.0F);
+            this.vantaGhostRatio += (ratio - this.vantaGhostRatio) * Math.min(1.0F, dt / 450.0F);
+        }
+        return (ghost ? this.vantaGhostRatio : this.vantaMainRatio) * barMax;
+    }
+
+    private void vantaSetup(EntityLivingBase target, float x, float y, float width, float height) {
+        this.vantaSetup(target, x, y, width, height, this.vantaScale());
+    }
+
+    private void vantaSetup(EntityLivingBase target, float x, float y, float width, float height,
+            float scale) {
+        this.headTexture = this.getSkin(target);
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(scale, scale, 0.0F);
+        GlStateManager.translate(0.0F, 0.0F, -450.0F);
+        GlStateManager.disableDepth();
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    private float vantaX(float width) {
+        return this.vantaX(width, this.vantaScale());
+    }
+
+    private float vantaX(float width, float scale) {
+        ScaledResolution resolution = new ScaledResolution(mc);
+        float x = this.offX.getValue().floatValue() / scale;
+        switch (this.posX.getValue()) {
+            case 1:
+                x += (float) resolution.getScaledWidth() / scale / 2.0F - width / 2.0F;
+                break;
+            case 2:
+                x *= -1.0F;
+                x += (float) resolution.getScaledWidth() / scale - width;
+        }
+        return x;
+    }
+
+    private float vantaY(float height) {
+        return this.vantaY(height, this.vantaScale());
+    }
+
+    private float vantaY(float height, float scale) {
+        ScaledResolution resolution = new ScaledResolution(mc);
+        float y = this.offY.getValue().floatValue() / scale;
+        switch (this.posY.getValue()) {
+            case 1:
+                y += (float) resolution.getScaledHeight() / scale / 2.0F - height / 2.0F;
+                break;
+            case 2:
+                y *= -1.0F;
+                y += (float) resolution.getScaledHeight() / scale - height;
+        }
+        return y;
+    }
+
+    private void renderOldAtmosphere(EntityLivingBase target) {
+        if (this.vantaNameFont == null) {
+            this.vantaNameFont = this.tahoma(9.0F);
+        }
+        if (this.vantaSmallFont == null) {
+            this.vantaSmallFont = this.tahoma(8.0F);
+        }
+        float width = 140.0F;
+        float height = 48.0F;
+        float barMax = width - 36.0F;
+        float widthOutline = width - 34.0F;
+        float space = 28.0F;
+        float x = this.vantaX(width);
+        float y = this.vantaY(height);
+        Color color = this.getTargetColor(target);
+        this.vantaSetup(target, x, y, width, height);
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x, y, x + width, y + height, new Color(20, 20, 20, 150).getRGB());
+        RenderUtil.drawRect(x + 33.0F, y + space - 1.0F, x + 33.0F + widthOutline, y + space - 1.0F + 5.0F,
+                new Color(20, 20, 20, 255).getRGB());
+        RenderUtil.drawRect(x + 34.0F, y + space, x + 34.0F + this.vantaBarWidth(target, barMax, true), y + space + 3.0F,
+                color.darker().getRGB());
+        RenderUtil.drawRect(x + 34.0F, y + space, x + 34.0F + this.vantaBarWidth(target, barMax, false), y + space + 3.0F,
+                color.getRGB());
+        RenderUtil.disableRenderState();
+
+        float itemX = x + 22.0F;
+        float itemY = y + 12.5F;
+        ItemStack held = ((EntityPlayer) target).inventory.getCurrentItem();
+        for (int slot = 3; slot >= 0; slot--) {
+            ItemStack armor = ((EntityPlayer) target).inventory.armorItemInSlot(slot);
+            if (armor != null) {
+                itemX += 11.0F;
+                this.vantaItem(armor, itemX, itemY, 0.8F);
+            }
+        }
+        if (held != null) {
+            itemX += 11.0F;
+            this.vantaItem(held, itemX + 1.0F, itemY + 1.0F, 0.8F);
+        }
+
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x + 1.0F, y + 34.0F, x + 1.0F + width - 2.0F, y + 34.0F + 12.0F,
+                new Color(20, 20, 20, 200).getRGB());
+        RenderUtil.disableRenderState();
+
+        this.vantaHead(target, x + 2.0F, y + 2.0F, 30.0F, this.vantaDamageTint(target));
+        this.vantaText(this.vantaNameFont, target.getName(), x + 33.0F, y + 3.0F, Color.WHITE, false);
+
+        float healthPercent = target.getHealth() / Math.max(1.0F, target.getMaxHealth()) * 100.0F;
+        String percentText = String.format(Locale.ROOT, "%.1f", healthPercent) + "%";
+        float percentWidth = this.vantaTextWidth(this.vantaSmallFont, percentText);
+        float diff = mc.thePlayer.getHealth() - target.getHealth();
+        String diffText = String.format(Locale.ROOT, "%.1f", diff);
+        String comparison;
+        if (diff > 0.0F) {
+            comparison = EnumChatFormatting.GRAY + "Winning" + EnumChatFormatting.DARK_GRAY + " (+" + diffText + ")";
+        } else if (diff == 0.0F) {
+            comparison = EnumChatFormatting.GRAY + "Tie" + EnumChatFormatting.DARK_GRAY + " (" + diffText + ")";
+        } else {
+            comparison = EnumChatFormatting.GRAY + "Losing" + EnumChatFormatting.DARK_GRAY + " (" + diffText + ")";
+        }
+        float lineHeight = this.vantaTextHeight(this.vantaSmallFont);
+        this.vantaText(this.vantaSmallFont, comparison, x + 3.0F, y + 34.0F + 6.0F - lineHeight / 2.0F, Color.WHITE, false);
+        this.vantaText(this.vantaSmallFont, percentText, x + width - percentWidth - 4.0F,
+                y + 34.0F + 6.0F - lineHeight / 2.0F, Color.WHITE, false);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private void renderAtmosphere(EntityLivingBase target) {
+        if (this.vantaNameFont == null) {
+            this.vantaNameFont = this.tahoma(9.0F);
+        }
+        if (this.vantaSmallFont == null) {
+            this.vantaSmallFont = this.tahoma(8.0F);
+        }
+        float width = 130.0F;
+        float height = 34.0F;
+        float barMax = width - 36.0F;
+        float widthOutline = width - 34.0F;
+        float space = 28.0F;
+        float x = this.vantaX(width);
+        float y = this.vantaY(height);
+        Color color = this.getTargetColor(target);
+        this.vantaSetup(target, x, y, width, height);
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x, y, x + width, y + height, new Color(20, 20, 20, 150).getRGB());
+        RenderUtil.drawRect(x + 33.0F, y + space - 1.0F, x + 33.0F + widthOutline, y + space - 1.0F + 5.0F,
+                new Color(20, 20, 20, 255).getRGB());
+        RenderUtil.drawRect(x + 34.0F, y + space, x + 34.0F + this.vantaBarWidth(target, barMax, true), y + space + 3.0F,
+                color.darker().getRGB());
+        RenderUtil.drawRect(x + 34.0F, y + space, x + 34.0F + this.vantaBarWidth(target, barMax, false), y + space + 3.0F,
+                color.getRGB());
+        RenderUtil.disableRenderState();
+
+        float itemX = x + 22.0F;
+        float itemY = y + 12.5F;
+        ItemStack held = ((EntityPlayer) target).inventory.getCurrentItem();
+        for (int slot = 3; slot >= 0; slot--) {
+            ItemStack armor = ((EntityPlayer) target).inventory.armorItemInSlot(slot);
+            if (armor != null) {
+                itemX += 11.0F;
+                this.vantaItem(armor, itemX, itemY, 0.8F);
+            }
+        }
+        if (held != null) {
+            itemX += 11.0F;
+            this.vantaItem(held, itemX + 1.0F, itemY + 1.0F, 0.8F);
+        }
+
+        this.vantaHead(target, x + 2.0F, y + 2.0F, 30.0F, this.vantaDamageTint(target));
+        this.vantaText(this.vantaNameFont, target.getName(), x + 33.0F, y + 3.0F, Color.WHITE, false);
+
+        float diff = mc.thePlayer.getHealth() - target.getHealth();
+        String diffText = String.format(Locale.ROOT, "%.1f", diff);
+        if (diff > 0.0F) {
+            diffText = "+" + diffText;
+        }
+        float diffWidth = this.vantaTextWidth(this.vantaSmallFont, diffText);
+        this.vantaText(this.vantaSmallFont, diffText, x + width - diffWidth - 2.0F, y + 17.0F, Color.WHITE, false);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private static double easeOutElastic(double progress) {
+        if (progress <= 0.0) {
+            return 0.0;
+        }
+        if (progress >= 1.0) {
+            return 1.0;
+        }
+        return Math.pow(2.0, -10.0 * progress)
+                * Math.sin((progress * 10.0 - 0.75) * (2.0 * Math.PI / 3.0)) + 1.0;
+    }
+
+    private void renderModern(EntityLivingBase target) {
+        if (this.modernLightFont == null) {
+            this.modernLightFont = Fonts.renderer("product_sans_light.ttf", 11.0F);
+        }
+        if (this.modernMediumFont == null) {
+            this.modernMediumFont = Fonts.renderer("product_sans_medium.ttf", 11.0F);
+        }
+        float modernScale = this.scale.getValue();
+        float head = 32.0F;
+        float maxHealth = Math.max(1.0F, target.getMaxHealth());
+        float rawHealth = Math.min(Math.round(target.getHealth() * 10.0F) / 10.0F, maxHealth);
+        String health = String.valueOf(rawHealth);
+        String name = target.getName();
+        float advantage = this.bmsAdvantage(target);
+        String state = advantage > 0.0F ? "Winning:" : advantage < 0.0F ? "Losing:" : "Drawing:";
+        Color stateColor = advantage > 0.0F ? BMS_WINNING
+                : advantage < 0.0F ? BMS_LOSING : BMS_DRAWING;
+        float stateWidth = this.width(this.modernLightFont, state);
+        float nameWidth = this.width(this.modernMediumFont, name);
+        float healthWidth = this.width(this.modernMediumFont, health);
+        float barWidth = Math.max(stateWidth + nameWidth + 35.0F - healthWidth, 65.0F);
+        float panelWidth = 48.0F + barWidth + 4.0F + healthWidth + 8.0F;
+        float panelHeight = 48.0F;
+        float x = this.vantaX(panelWidth, modernScale);
+        float y = this.vantaY(panelHeight, modernScale);
+
+        long now = System.currentTimeMillis();
+        float dt = this.modernFrameMs == 0L ? 0.0F : Math.min(now - this.modernFrameMs, 100L);
+        this.modernFrameMs = now;
+        float ratio = Math.min(Math.max(rawHealth / maxHealth, 0.0F), 1.0F);
+        if (target != this.modernTarget || !this.animations.getValue()) {
+            this.modernTarget = target;
+            this.modernRaw = this.animations.getValue() ? 0.0 : 1.0;
+            this.modernHealthValue = ratio * barWidth;
+        } else {
+            this.modernRaw = Math.min(1.0, this.modernRaw + dt / 850.0);
+            this.modernHealthValue += (ratio * barWidth - this.modernHealthValue)
+                    * Math.min(1.0, dt / 250.0);
+        }
+        double pop = this.animations.getValue() ? easeOutElastic(this.modernRaw) : 1.0;
+        if (pop <= 0.0) {
+            return;
+        }
+
+        float partial = AccessorMinecraft.getTimer(mc).renderPartialTicks;
+        float hurt = this.animations.getValue() && target.hurtTime != 0
+                ? Math.max(0.0F, (target.hurtTime - partial) * 0.5F) : 0.0F;
+        float hurtShift = hurt / 2.0F;
+        Color accent = this.getTargetColor(target);
+        Color accentDark = accent.darker();
+        Color headTint = lerpColor(Color.WHITE, Color.RED, Math.min(1.0F, hurt / 9.0F));
+
+        this.bmsBlurPanel(x, y, panelWidth - 1.0F, panelHeight, modernScale, (float) pop, 16.0F);
+        this.vantaSetup(target, x, y, panelWidth, panelHeight, modernScale);
+        GlStateManager.translate((x + panelWidth / 2.0F) * (1.0 - pop),
+                (y + panelHeight / 2.0F) * (1.0 - pop), 0.0);
+        GlStateManager.scale(pop, pop, 1.0);
+
+        RenderUtil.enableRenderState();
+        this.bmsRound(x, y, panelWidth - 1.0F, panelHeight, 16.0F,
+                new Color(18, 18, 22, BlurUtils.isReady() ? 120 : 210).getRGB());
+        float barX = x + 8.0F + head + 7.0F;
+        float barY = y + 8.0F + head - 4.0F - 7.0F;
+        this.gradientRound(barX, barY, barWidth, 6.0F, 3.0F,
+                new Color(0, 0, 0, 110).getRGB(), new Color(0, 0, 0, 200).getRGB());
+        this.gradientRound(barX, barY, (float) this.modernHealthValue, 6.0F, 3.0F,
+                lerpColor(accent, Color.WHITE, 0.5F).getRGB(),
+                lerpColor(accent, Color.BLACK, 0.15F).getRGB());
+        RenderUtil.disableRenderState();
+
+        this.bmsHead(target, x + 8.0F + hurtShift, y + 8.0F + hurtShift, head - hurt,
+                16.0F, headTint);
+        this.text(this.modernLightFont, state, x + 8.0F + head + 7.0F, y + 14.0F, stateColor);
+        this.text(this.modernMediumFont, name, x + 8.0F + head + 7.0F + stateWidth + 3.0F,
+                y + 14.5F, accent);
+        this.text(this.modernMediumFont, health, barX + barWidth + 4.0F,
+                y + 8.0F + head - 4.0F - 8.0F, Color.WHITE);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private float width(RavenFontRenderer font, String text) {
+        return font == null ? mc.fontRendererObj.getStringWidth(text) : font.getStringWidth(text);
+    }
+
+    private void gradientRound(float x, float y, float width, float height, float radius,
+            int top, int bottom) {
+        if (width <= 0.0F) {
+            return;
+        }
+        if (RoundedShader.isGradientReady()) {
+            RoundedShader.drawRoundGradient(x, y, width, height, radius, top, bottom);
+        } else {
+            this.bmsRound(x, y, width, height, radius, bottom);
+        }
+    }
+
+    private void text(RavenFontRenderer font, String text, float x, float y, Color color) {
+        if (font != null) {
+            font.drawString(text, x, y, color.getRGB(), false);
+        } else {
+            mc.fontRendererObj.drawString(text, x, y, color.getRGB(), false);
+        }
+    }
+
+    private static Color lerpColor(Color from, Color to, float amount) {
+        float inverse = 1.0F - amount;
+        return new Color((int) (to.getRed() * amount + from.getRed() * inverse),
+                (int) (to.getGreen() * amount + from.getGreen() * inverse),
+                (int) (to.getBlue() * amount + from.getBlue() * inverse));
+    }
+
+    private void bmsBlurPanel(float x, float y, float width, float height, float base, float pop,
+            float radius) {
+        if (!BlurUtils.isReady() || !RoundedShader.isReady()) {
+            return;
+        }
+        float effective = base * pop;
+        float screenX = base * ((x + width / 2.0F) * (1.0F - pop) + pop * x);
+        float screenY = base * ((y + height / 2.0F) * (1.0F - pop) + pop * y);
+        GlStateManager.disableDepth();
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        BlurUtils.prepareBloom();
+        RoundedShader.drawRound(screenX, screenY, width * effective, height * effective,
+                radius * effective, new Color(0, 0, 0, 140).getRGB());
+        BlurUtils.bloomEnd(BMS_BLOOM_PASSES, BMS_BLOOM_RADIUS);
+        BlurUtils.prepareBlur();
+        RoundedShader.drawRound(screenX, screenY, width * effective, height * effective,
+                radius * effective, new Color(0, 0, 0, 255).getRGB());
+        BlurUtils.blurEnd(BMS_BLUR_PASSES, BMS_BLUR_RADIUS);
+    }
+
+    private void bmsHead(EntityLivingBase target, float x, float y, float size) {
+        this.bmsHead(target, x, y, size, BMS_HEAD_RADIUS, this.vantaDamageTint(target));
+    }
+
+    private void bmsHead(EntityLivingBase target, float x, float y, float size, float radius,
+            Color tint) {
+        if (!RoundedShader.isReady()) {
+            this.vantaHead(target, x, y, size, tint);
+            return;
+        }
+        StencilUtil.initStencil();
+        StencilUtil.bindWriteStencilBuffer();
+        RoundedShader.drawRound(x, y, size, size, radius, Color.WHITE.getRGB());
+        StencilUtil.bindReadStencilBuffer(1);
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GlStateManager.enableTexture2D();
+        this.vantaHead(target, x, y, size, tint);
+        GlStateManager.disableBlend();
+        StencilUtil.uninitStencilBuffer();
+    }
+
+    private void bmsText(String text, float x, float y, Color color) {
+        if (this.bmsFont != null) {
+            this.bmsFont.drawString(text, x, y, color.getRGB(), false);
+        } else {
+            mc.fontRendererObj.drawString(text, x, y, color.getRGB(), false);
+        }
+    }
+
+    private float bmsWidth(String text) {
+        return this.bmsFont == null
+                ? mc.fontRendererObj.getStringWidth(text)
+                : this.bmsFont.getStringWidth(text);
+    }
+
+    private float bmsAdvantage(EntityLivingBase target) {
+        long now = System.currentTimeMillis();
+        if (now - this.bmsAdvantageTime > BMS_ADVANTAGE_CACHE_MS) {
+            this.bmsAdvantageValue = this.bmsCalculateAdvantage(target);
+            this.bmsAdvantageTime = now;
+        }
+        return this.bmsAdvantageValue;
+    }
+
+    private float bmsCalculateAdvantage(EntityLivingBase target) {
+        float self = Math.max(0.1F, mc.thePlayer.getHealth());
+        float other = Math.max(0.1F, target.getHealth());
+        float ours = this.bmsDamage(mc.thePlayer.getHeldItem(), mc.thePlayer, target);
+        float theirs = this.bmsDamage(target.getHeldItem(), target, mc.thePlayer);
+        if (ours <= 0.01F && theirs <= 0.01F) {
+            return 0.0F;
+        }
+        int steps;
+        for (steps = 0; self > 0.0F && other > 0.0F && steps < 256; steps++) {
+            other -= ours;
+            self -= theirs;
+        }
+        return steps >= 256 ? ours - theirs : self - other;
+    }
+
+    private float bmsDamage(ItemStack stack, EntityLivingBase attacker, EntityLivingBase victim) {
+        float damage = 1.0F;
+        if (stack != null) {
+            Item item = stack.getItem();
+            if (item instanceof ItemSword || item instanceof ItemTool) {
+                float weapon = bmsWeaponDamage(stack);
+                if (weapon > 0.0F) {
+                    damage = weapon;
+                }
+            }
+            int sharpness = EnchantmentHelper.getEnchantmentLevel(
+                    Enchantment.sharpness.effectId, stack);
+            if (sharpness > 0) {
+                damage += sharpness * 1.25F;
+            }
+        }
+        if (attacker != null) {
+            PotionEffect strength = attacker.getActivePotionEffect(Potion.damageBoost);
+            int level = strength == null ? 0 : strength.getAmplifier() + 1;
+            if (level > 0) {
+                damage += level * 3.0F;
+            }
+        }
+        if (victim != null) {
+            damage *= 1.0F - Math.min(victim.getTotalArmorValue() * 0.04F, 0.8F);
+            int points = Math.min(20, (int) Math.ceil(
+                    Math.min(25, this.bmsProtectionPoints(victim)) * 0.75F));
+            if (points > 0) {
+                damage *= 1.0F - points * 0.04F;
+            }
+            PotionEffect resistance = victim.getActivePotionEffect(Potion.resistance);
+            int level = resistance == null ? 0 : resistance.getAmplifier() + 1;
+            if (level > 0) {
+                damage *= 1.0F - Math.min(level * 0.2F, 0.8F);
+            }
+        }
+        if (!Float.isFinite(damage)) {
+            damage = 1.0F;
+        }
+        return Math.max(0.01F, damage);
+    }
+
+    private static float bmsWeaponDamage(ItemStack stack) {
+        Multimap<String, AttributeModifier> modifiers = stack.getAttributeModifiers();
+        if (modifiers == null) {
+            return 0.0F;
+        }
+        Collection<AttributeModifier> attack = modifiers.get(
+                SharedMonsterAttributes.attackDamage.getAttributeUnlocalizedName());
+        if (attack == null) {
+            return 0.0F;
+        }
+        double total = 0.0;
+        for (AttributeModifier modifier : attack) {
+            total += modifier.getAmount();
+        }
+        return (float) total;
+    }
+
+    private int bmsProtectionPoints(EntityLivingBase living) {
+        int total = 0;
+        for (int slot = 0; slot < 4; slot++) {
+            ItemStack armor = living.getCurrentArmor(slot);
+            int level = armor == null ? 0
+                    : EnchantmentHelper.getEnchantmentLevel(Enchantment.protection.effectId, armor);
+            if (level > 0) {
+                total += (int) Math.floor((6 + level * level) * 0.75F / 3.0F);
+            }
+        }
+        return total;
+    }
+
+    private void bmsRound(float x, float y, float width, float height, float radius, int color) {
+        if (RoundedShader.isReady()) {
+            RoundedShader.drawRound(x, y, width, height, radius, color);
+        } else {
+            RenderUtil.drawRect(x, y, x + width, y + height, color);
+        }
+    }
+
+    private void renderBms(EntityLivingBase target) {
+        if (this.bmsFont == null) {
+            this.bmsFont = Fonts.renderer("product_sans_light.ttf", 11.0F);
+        }
+        float bmsScale = this.scale.getValue();
+        float padding = 4.0F;
+        float head = 32.0F;
+        float barWidth = 100.0F;
+        float width = padding + head + padding + barWidth + padding + padding;
+        float height = head + padding * 2.0F;
+        float panelWidth = width - 4.0F;
+        float x = this.vantaX(panelWidth, bmsScale);
+        float y = this.vantaY(height, bmsScale);
+
+        long now = System.currentTimeMillis();
+        float dt = this.bmsFrameMs == 0L ? 0.0F : Math.min(now - this.bmsFrameMs, 100L);
+        this.bmsFrameMs = now;
+        float ratio = Math.min(Math.max(target.getHealth() / Math.max(1.0F, target.getMaxHealth()), 0.0F), 1.0F);
+        if (target != this.bmsTarget || !this.animations.getValue()) {
+            this.bmsTarget = target;
+            this.bmsRaw = this.animations.getValue() ? 0.0 : 1.0;
+            this.bmsHealthValue = ratio * 100.0;
+        } else {
+            this.bmsRaw = Math.min(1.0, this.bmsRaw + dt / 850.0);
+            this.bmsHealthValue += (ratio * 100.0 - this.bmsHealthValue) * Math.min(1.0, dt / 250.0);
+        }
+        double scale = this.animations.getValue() ? easeOutElastic(this.bmsRaw) : 1.0;
+        if (scale <= 0.0) {
+            return;
+        }
+
+        Color accent = this.getTargetColor(target);
+        this.bmsBlurPanel(x, y, panelWidth, height, bmsScale, (float) scale, BMS_PANEL_RADIUS);
+        this.vantaSetup(target, x, y, panelWidth, height, bmsScale);
+        GlStateManager.translate((x + panelWidth / 2.0F) * (1.0 - scale),
+                (y + height / 2.0F) * (1.0 - scale), 0.0);
+        GlStateManager.scale(scale, scale, 1.0);
+
+        RenderUtil.enableRenderState();
+        this.bmsRound(x, y, panelWidth, height, BMS_PANEL_RADIUS,
+                new Color(18, 18, 22, BlurUtils.isReady() ? 120 : 210).getRGB());
+        this.bmsRound(x + padding + head + padding, y + padding + head - padding - 10.0F,
+                barWidth, 12.0F, 2.0F, Color.darkGray.darker().getRGB());
+        this.bmsRound(x + padding + head + padding, y + padding + head - padding - 10.0F,
+                (float) (this.bmsHealthValue / 100.0 * barWidth), 12.0F, 2.0F,
+                new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 200).getRGB());
+        RenderUtil.disableRenderState();
+
+        this.bmsHead(target, x + padding, y + padding, head);
+        String name = target.getName();
+        float nameX = x + padding + head + padding;
+        float nameY = y + padding + 2.0F;
+        this.bmsText(name, nameX, nameY, Color.WHITE);
+        float advantage = this.bmsAdvantage(target);
+        String state = advantage > 0.0F ? "Winning" : advantage < 0.0F ? "Losing" : "Drawing";
+        Color stateColor = advantage > 0.0F ? BMS_WINNING
+                : advantage < 0.0F ? BMS_LOSING : BMS_DRAWING;
+        this.bmsText(state, nameX + this.bmsWidth(name) + 4.0F, nameY, stateColor);
+        String percent = Math.round(ratio * 100.0F) + "%";
+        float percentWidth = this.bmsWidth(percent);
+        this.bmsText(percent,
+                x + padding + head + padding + barWidth / 2.0F - percentWidth / 2.0F,
+                y + padding + head - padding - 8.0F, Color.WHITE);
+
+        GlStateManager.disableBlend();
+        GlStateManager.enableDepth();
+        GlStateManager.popMatrix();
+    }
+
+    private void renderAdjust(EntityLivingBase target) {
+        if (this.vantaAdjustNameFont == null) {
+            this.vantaAdjustNameFont = this.tahoma(8.0F);
+        }
+        if (this.vantaAdjustSmallFont == null) {
+            this.vantaAdjustSmallFont = this.tahoma(7.0F);
+        }
+        float width = 100.0F;
+        float height = 30.0F;
+        float barMax = width - 4.0F;
+        float space = 24.5F;
+        float x = this.vantaX(width);
+        float y = this.vantaY(height);
+        Color color = this.getTargetColor(target);
+        this.vantaSetup(target, x, y, width, height);
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x, y, x + width, y + height, new Color(20, 20, 20, 200).getRGB());
+        RenderUtil.drawRect(x + 1.75F, y + space - 0.25F, x + 1.75F + barMax + 0.5F, y + space - 0.25F + 3.75F,
+                new Color(10, 10, 10).getRGB());
+        RenderUtil.drawRect(x + 2.0F, y + space, x + 2.0F + this.vantaBarWidth(target, barMax, true), y + space + 3.0F,
+                color.darker().getRGB());
+        RenderUtil.drawRect(x + 2.0F, y + space, x + 2.0F + this.vantaBarWidth(target, barMax, false), y + space + 3.0F,
+                color.getRGB());
+        RenderUtil.disableRenderState();
+
+        float itemX = x + 12.0F;
+        float itemY = y + 10.0F;
+        ItemStack held = ((EntityPlayer) target).inventory.getCurrentItem();
+        if (held != null) {
+            itemX += 11.0F;
+            this.vantaItem(held, itemX + 1.0F, itemY + 1.0F, 0.65F);
+        }
+        for (int slot = 3; slot >= 0; slot--) {
+            ItemStack armor = ((EntityPlayer) target).inventory.armorItemInSlot(slot);
+            if (armor != null) {
+                itemX += 11.0F;
+                this.vantaItem(armor, itemX, itemY, 0.75F);
+            }
+        }
+
+        this.vantaHead(target, x + 2.0F, y + 2.0F, 20.0F, this.vantaDamageTint(target));
+        this.vantaText(this.vantaAdjustNameFont, target.getName(), x + 23.0F, y + 3.0F, Color.WHITE, false);
+
+        float diff = mc.thePlayer.getHealth() - target.getHealth();
+        String diffText = String.format(Locale.ROOT, "%.1f", diff);
+        float diffWidth = this.vantaTextWidth(this.vantaAdjustSmallFont, diffText);
+        this.vantaText(this.vantaAdjustSmallFont, diffText, x + width - diffWidth - 2.0F, y + 15.0F, Color.WHITE, false);
 
         GlStateManager.disableBlend();
         GlStateManager.enableDepth();

@@ -8,6 +8,7 @@ import myau.events.*;
 import myau.inject.Log;
 import myau.module.Module;
 import myau.property.properties.BooleanProperty;
+import myau.property.properties.FloatProperty;
 import myau.property.properties.ModeProperty;
 import myau.property.properties.PercentProperty;
 import myau.util.*;
@@ -53,6 +54,13 @@ public class Scaffold extends Module {
     };
     private static final int SUBMIT_GRIM = 1;
     private static final int MODE_SMOOTH = 4;
+    private static final int MODE_WATCHDOG = 5;
+    private static final int WATCHDOG_CANDIDATES = 256;
+    private static final float[] WATCHDOG_SWEEP =
+            {0.0F, 45.0F, -45.0F, 90.0F, -90.0F, 135.0F, -135.0F, 180.0F};
+    private static final float WATCHDOG_AXIS_SLACK = 10.0F;
+    private static final float WATCHDOG_AXIS_SPAN = 135.0F;
+    private static final float WATCHDOG_DIAGONAL_SPAN = 180.0F;
     private static final float PINNED_PITCH_STEP = 1.0F;
     private static final float PINNED_PITCH_MIN = 25.0F;
     private static final float PINNED_PITCH_MAX = 90.0F;
@@ -86,10 +94,14 @@ public class Scaffold extends Module {
     private boolean towering = false;
     private EnumFacing targetFacing = null;
     public final ModeProperty rotationMode = new ModeProperty(
-            "rotations", 2, new String[]{"NONE", "DEFAULT", "BACKWARDS", "SIDEWAYS", "SMOOTH"});
+            "rotations", 2,
+            new String[]{"NONE", "DEFAULT", "BACKWARDS", "SIDEWAYS", "SMOOTH", "WATCHDOG"});
+    public final FloatProperty watchdogYawLimit = new FloatProperty("watchdog-yaw-limit",
+            180.0F, 0.0F, 180.0F, 5.0F, () -> this.rotationMode.getValue() == MODE_WATCHDOG);
     public final ModeProperty moveFix = new ModeProperty("move-fix", 1, new String[]{"NONE", "SILENT"});
     public final ModeProperty rotationSubmit = new ModeProperty("rotation-mode", 0, new String[]{"NORMAL", "GRIM"});
-    public final ModeProperty sprintMode = new ModeProperty("sprint", 0, new String[]{"NONE", "VANILLA"});
+    public final ModeProperty sprintMode = new ModeProperty("sprint", 0,
+            new String[]{"NONE", "VANILLA"});
     public final PercentProperty groundMotion = new PercentProperty("ground-motion", 100);
     public final PercentProperty airMotion = new PercentProperty("air-motion", 100);
     public final PercentProperty speedMotion = new PercentProperty("speed-motion", 100);
@@ -169,6 +181,25 @@ public class Scaffold extends Module {
             }
         }
         return candidates;
+    }
+
+    private double[] watchdogAxis(EnumFacing facing, int axis) {
+        switch (facing) {
+            case NORTH:
+                return axis == 2 ? new double[]{0.0} : placeOffsets;
+            case SOUTH:
+                return axis == 2 ? new double[]{1.0} : placeOffsets;
+            case WEST:
+                return axis == 0 ? new double[]{0.0} : placeOffsets;
+            case EAST:
+                return axis == 0 ? new double[]{1.0} : placeOffsets;
+            case DOWN:
+                return axis == 1 ? new double[]{0.0} : placeOffsets;
+            case UP:
+                return axis == 1 ? new double[]{1.0} : placeOffsets;
+            default:
+                return placeOffsets;
+        }
     }
 
     private BlockData getBlockData() {
@@ -389,6 +420,7 @@ public class Scaffold extends Module {
                 if (!this.canRotate) {
                     switch (this.rotationMode.getValue()) {
                         case 1:
+                        case MODE_WATCHDOG:
                             if (this.yaw == -180.0F && this.pitch == 0.0F) {
                                 this.yaw = RotationUtil.quantizeAngle(diagonalYaw);
                                 this.pitch = RotationUtil.quantizeAngle(85.0F);
@@ -469,6 +501,114 @@ public class Scaffold extends Module {
                     }
                     if (hitVec == null) {
                         this.yaw = RotationUtil.quantizeAngle(base + this.smoothYawOffset);
+                    }
+                } else if (this.rotationMode.getValue() == MODE_WATCHDOG) {
+                    float sentYaw = event.getYaw();
+                    float sentPitch = event.getPitch();
+                    float sweepBase = mc.thePlayer.rotationYaw;
+                    float axisOffset = Math.abs(MathHelper.wrapAngleTo180_float(sweepBase) % 90.0F);
+                    boolean axisAligned = axisOffset <= WATCHDOG_AXIS_SLACK
+                            || axisOffset >= 90.0F - WATCHDOG_AXIS_SLACK;
+                    float sweepLimit = axisAligned ? WATCHDOG_AXIS_SPAN : WATCHDOG_DIAGONAL_SPAN;
+                    float yawLimit = this.watchdogYawLimit.getValue();
+                    float bestYaw = 0.0F;
+                    float bestPitch = 0.0F;
+                    BlockData bestData = null;
+                    Vec3 bestHit = null;
+                    for (BlockData candidate : this.getBlockDataCandidates(WATCHDOG_CANDIDATES)) {
+                        float pickYaw = 0.0F;
+                        float pickPitch = 0.0F;
+                        float pickScore = Float.MAX_VALUE;
+                        Vec3 pickHit = null;
+                        for (int step = 0; step < WATCHDOG_SWEEP.length; step++) {
+                            if (Math.abs(WATCHDOG_SWEEP[step]) > sweepLimit) {
+                                continue;
+                            }
+                            float candidateYaw =
+                                    RotationUtil.quantizeAngle(sweepBase + WATCHDOG_SWEEP[step]);
+                            float yawOff = Math.abs(
+                                    MathHelper.wrapAngleTo180_float(candidateYaw - sentYaw));
+                            if (yawOff > yawLimit) {
+                                continue;
+                            }
+                            MovingObjectPosition mop = this.solvePinnedPitch(
+                                    candidate.blockPos(), candidate.facing(), candidateYaw);
+                            if (mop == null) {
+                                continue;
+                            }
+                            float candidatePitch = this.pinnedPitch;
+                            float pitchOff = Math.abs(candidatePitch - sentPitch);
+                            float score = yawOff * yawOff + pitchOff * pitchOff;
+                            if (pickHit == null || score < pickScore) {
+                                pickScore = score;
+                                pickYaw = candidateYaw;
+                                pickPitch = candidatePitch;
+                                pickHit = mop.hitVec;
+                            }
+                        }
+                        if (pickHit != null) {
+                            bestYaw = pickYaw;
+                            bestPitch = pickPitch;
+                            bestData = candidate;
+                            bestHit = pickHit;
+                            break;
+                        }
+                    }
+                    if (bestData == null) {
+                        for (BlockData candidate : this.getBlockDataCandidates(WATCHDOG_CANDIDATES)) {
+                            float pickYaw = 0.0F;
+                            float pickPitch = 0.0F;
+                            float pickScore = Float.MAX_VALUE;
+                            Vec3 pickHit = null;
+                            for (double dx : this.watchdogAxis(candidate.facing(), 0)) {
+                                for (double dy : this.watchdogAxis(candidate.facing(), 1)) {
+                                    for (double dz : this.watchdogAxis(candidate.facing(), 2)) {
+                                        double relX = (double) candidate.blockPos().getX() + dx
+                                                - mc.thePlayer.posX;
+                                        double relY = (double) candidate.blockPos().getY() + dy
+                                                - mc.thePlayer.posY - (double) mc.thePlayer.getEyeHeight();
+                                        double relZ = (double) candidate.blockPos().getZ() + dz
+                                                - mc.thePlayer.posZ;
+                                        float[] rotations = RotationUtil.getRotationsTo(
+                                                relX, relY, relZ, sentYaw, sentPitch);
+                                        MovingObjectPosition mop = RotationUtil.rayTrace(rotations[0],
+                                                rotations[1], mc.playerController.getBlockReachDistance(), 1.0F);
+                                        if (mop == null
+                                                || mop.typeOfHit != MovingObjectType.BLOCK
+                                                || !mop.getBlockPos().equals(candidate.blockPos())
+                                                || mop.sideHit != candidate.facing()) {
+                                            continue;
+                                        }
+                                        float yawOff = Math.abs(
+                                                MathHelper.wrapAngleTo180_float(rotations[0] - sentYaw));
+                                        float pitchOff = Math.abs(rotations[1] - sentPitch);
+                                        float score = yawOff * yawOff + pitchOff * pitchOff;
+                                        if (pickHit == null || score < pickScore) {
+                                            pickScore = score;
+                                            pickYaw = rotations[0];
+                                            pickPitch = rotations[1];
+                                            pickHit = mop.hitVec;
+                                        }
+                                    }
+                                }
+                            }
+                            if (pickHit != null) {
+                                bestYaw = pickYaw;
+                                bestPitch = pickPitch;
+                                bestData = candidate;
+                                bestHit = pickHit;
+                                break;
+                            }
+                        }
+                    }
+                    if (bestData != null) {
+                        this.yaw = bestYaw;
+                        this.pitch = bestPitch;
+                        this.canRotate = true;
+                        blockData = bestData;
+                        hitVec = bestHit;
+                    } else {
+                        this.yaw = RotationUtil.quantizeAngle(diagonalYaw);
                     }
                 } else if (blockData != null) {
                     double[] x = placeOffsets;

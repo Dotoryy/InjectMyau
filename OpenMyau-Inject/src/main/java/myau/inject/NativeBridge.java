@@ -21,6 +21,10 @@ public final class NativeBridge {
     private static final boolean DUMP_TARGETS = false;
     private static final ThreadLocal<Boolean> REMAPPING = new ThreadLocal<Boolean>();
     private static HookTransformer transformer;
+
+    public static HookTransformer transformer() {
+        return transformer;
+    }
     private static volatile Set<String> ourClasses;
     private static boolean installed;
     private NativeBridge() {
@@ -71,6 +75,53 @@ public final class NativeBridge {
             Log.throwable("retransform failed", t);
         }
     }
+
+    public static synchronized void reportUnapplied(String phase) {
+        HookTransformer active = transformer;
+        if (active == null) {
+            return;
+        }
+        try {
+            java.util.List<HookRegistry.Hook> all = HookRegistry.allHooks();
+            Set<String> applied = active.appliedKeys();
+            Set<String> patchedOwners = active.patchedOwners();
+            java.util.List<String> missingRequired = new ArrayList<String>();
+            java.util.List<String> missingOptional = new ArrayList<String>();
+            for (HookRegistry.Hook hook : all) {
+                if (applied.contains(HookRegistry.keyOf(hook))) {
+                    continue;
+                }
+                String line = HookRegistry.keyOf(hook)
+                        + (patchedOwners.contains(hook.owner) ? "" : "  [class never transformed]");
+                if (hook.required) {
+                    missingRequired.add(line);
+                } else {
+                    missingOptional.add(line);
+                }
+            }
+            log("=== hook report (" + phase + ") ===");
+            log("applied " + applied.size() + "/" + all.size()
+                    + ", required missing " + missingRequired.size()
+                    + ", optional missing " + missingOptional.size());
+            for (String line : missingRequired) {
+                log("  MISSING(required) " + line);
+            }
+            for (String line : missingOptional) {
+                log("  MISSING(optional) " + line);
+            }
+            java.util.List<String> failures = active.failures();
+            if (!failures.isEmpty()) {
+                log("transform failures (" + failures.size() + "):");
+                for (String failure : failures) {
+                    log("  " + failure);
+                }
+            }
+            log("=== end hook report (" + phase + ") ===");
+        } catch (Throwable t) {
+            Log.throwable("hook report failed", t);
+        }
+    }
+
     private static void checkCallbacks() {
         int checked = 0;
         int wrong = 0;

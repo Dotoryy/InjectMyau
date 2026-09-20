@@ -16,7 +16,7 @@ public final class MsdfFontRenderer implements RavenFontRenderer {
         this.inkHeight = Math.max(1.0F, (atlas.inkTop - atlas.inkBottom) * size);
     }
     private float shadowOffset() {
-        return Math.max(0.5F, this.size * SHADOW_SCALE);
+        return 1.0F;
     }
     @Override
     public int drawString(String text, float x, float y, int color, boolean shadow) {

@@ -5097,13 +5097,13 @@
       }
     },
     "net.minecraft.network.play.server.S08PacketPlayerPosLook": {
-      "yaw": {
-        "notch": "d",
-        "srg": "field_148936_d"
-      },
       "pitch": {
         "notch": "e",
         "srg": "field_148937_e"
+      },
+      "yaw": {
+        "notch": "d",
+        "srg": "field_148936_d"
       }
     },
     "net.minecraft.util.BlockPos": {
@@ -7668,6 +7668,12 @@
       "updateWeather": {
         "notch": "p",
         "srg": "func_72979_l"
+      }
+    },
+    "net.minecraft.client.network.NetHandlerPlayClient": {
+      "handlePlayerPosLook": {
+        "notch": "a",
+        "srg": "func_147258_a"
       }
     },
     "net.minecraft.client.renderer.BlockModelRenderer": {

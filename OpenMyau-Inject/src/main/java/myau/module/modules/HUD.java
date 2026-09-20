@@ -12,6 +12,7 @@ import myau.util.ColorUtil;
 import myau.util.RenderUtil;
 import myau.util.font.Fonts;
 import myau.util.font.RavenFontRenderer;
+import myau.util.font.MinecraftFontAdapter;
 import myau.property.properties.*;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiChat;
@@ -29,6 +30,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 public class HUD extends Module {
+    private static final java.util.regex.Pattern WATCHDOG_WORD =
+            java.util.regex.Pattern.compile("watchdog", java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final Minecraft mc = Minecraft.getMinecraft();
     private final Map<Module, Entry> entries = new LinkedHashMap<>();
     private List<Entry> activeEntries = new ArrayList<>();
@@ -45,6 +48,7 @@ public class HUD extends Module {
     private static final int OUTLINE_NONE = 0;
     private static final int OUTLINE_FULL = 1;
     private static final int OUTLINE_SIDE = 2;
+    private static final int OUTLINE_SIDEBAR = 3;
     private static final int COLOR_THEME = 6;
     public final ModeProperty colorMode = new ModeProperty(
             "color", 3, new String[]{"RAINBOW", "CHROMA", "ASTOLFO", "CUSTOM1", "CUSTOM12", "CUSTOM123", "THEME"}
@@ -65,7 +69,7 @@ public class HUD extends Module {
     public final FloatProperty scale = new FloatProperty("scale", 1.0F, 0.5F, 1.5F);
     public final PercentProperty background = new PercentProperty("background", 43);
     public final ModeProperty arraylistOutline = new ModeProperty("arraylist-outline", OUTLINE_SIDE,
-            new String[]{"NONE", "FULL", "SIDE"});
+            new String[]{"NONE", "FULL", "SIDE", "SIDEBAR"});
     public final BooleanProperty shadow = new BooleanProperty("shadow", true);
     public final ModeProperty arraylistFont = new ModeProperty("arraylist-font", 0,
             new String[]{"VANILLA", "SF-BOLD", "SF-REGULAR", "SF-UI", "PRODUCT-SANS",
@@ -73,6 +77,8 @@ public class HUD extends Module {
                     "MSDF-GOOGLE-SANS", "MSDF-GOOGLE-SANS-BOLD", "MSDF-TAHOMA",
                     "MSDF-TAHOMA-BOLD", "MSDF-VERDANA"});
     public final BooleanProperty suffixes = new BooleanProperty("suffixes", true);
+    public final BooleanProperty preferHypixel = new BooleanProperty("prefer-hypixel", false,
+            () -> this.suffixes.getValue());
     public final BooleanProperty lowerCase = new BooleanProperty("lower-case", false);
     public final BooleanProperty removeSpaces = new BooleanProperty("remove-spaces", false);
     public final BooleanProperty chatOutline = new BooleanProperty("chat-outline", true);
@@ -116,7 +122,26 @@ public class HUD extends Module {
     }
     private void arraylistDraw(String text, float x, float y, int color) {
         int opaque = (color & 0xFF000000) == 0 ? color | 0xFF000000 : color;
-        this.getArraylistFont().drawString(text, x, y, opaque, this.shadow.getValue());
+        RavenFontRenderer font = this.getArraylistFont();
+        if (this.shadow.getValue()) {
+            float offset = font instanceof MinecraftFontAdapter ? 1.0F : 0.5F;
+            int shadowColor = opaque & 0xFF000000;
+            font.drawString(stripColorCodes(text), x + offset, y + offset, shadowColor, false);
+        }
+        font.drawString(text, x, y, opaque, false);
+    }
+
+    private static String stripColorCodes(String text) {
+        StringBuilder builder = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char character = text.charAt(i);
+            if (character == '§' && i + 1 < text.length()) {
+                i++;
+                continue;
+            }
+            builder.append(character);
+        }
+        return builder.toString();
     }
     private float getColorCycle(long long3, long long4) {
         long speed = (long) (3000.0 / Math.pow(Math.min(Math.max(0.5F, this.colorSpeed.getValue()), 1.5F), 3.0));
@@ -203,7 +228,7 @@ public class HUD extends Module {
                 continue;
             }
             String name = this.formatEntryText(entry.module.getName());
-            String[] suffix = entry.module.getSuffix();
+            String[] suffix = this.applySuffixPreference(entry.module.getSuffix());
             boolean hasTag = this.suffixes.getValue() && suffix.length > 0;
 
             entry.displayText = hasTag
@@ -217,6 +242,17 @@ public class HUD extends Module {
                 .filter(entry -> shows(entry.module) || entry.animationTime > 0.0F)
                 .sorted(Comparator.comparingDouble(entry -> -entry.width))
                 .collect(Collectors.toList());
+    }
+
+    private String[] applySuffixPreference(String[] suffix) {
+        if (!this.preferHypixel.getValue() || suffix.length == 0) {
+            return suffix;
+        }
+        String[] result = new String[suffix.length];
+        for (int i = 0; i < suffix.length; i++) {
+            result[i] = WATCHDOG_WORD.matcher(suffix[i]).replaceAll("Hypixel");
+        }
+        return result;
     }
 
     private float outlineSpace() {
@@ -241,6 +277,17 @@ public class HUD extends Module {
         float thickness = this.outlineThickness();
         float outerLeft = boxLeft - thickness;
         float outerRight = boxRight + thickness;
+        if (mode == OUTLINE_SIDEBAR) {
+            RenderUtil.drawRect(outerLeft, boxTop, boxLeft, boxBottom, color);
+            if (!firstRow) {
+                float linkTop = this.posY.getValue() == 0 ? boxTop - thickness : boxBottom;
+                float linkBottom = linkTop + thickness;
+                float segLeft = Math.min(prevLeft, outerLeft);
+                float segRight = Math.max(prevLeft, outerLeft) + thickness;
+                RenderUtil.drawRect(segLeft, linkTop, segRight, linkBottom, color);
+            }
+            return;
+        }
         boolean anchoredLeft = this.posX.getValue() == 0;
         if (anchoredLeft) {
             RenderUtil.drawRect(outerLeft, boxTop, boxLeft, boxBottom, color);
@@ -262,10 +309,10 @@ public class HUD extends Module {
             return;
         }
         if (prevLeft < outerLeft) {
-            RenderUtil.drawRect(prevLeft, bandTop, outerLeft, bandBottom, color);
+            RenderUtil.drawRect(prevLeft, bandTop, outerLeft + thickness, bandBottom, color);
         }
         if (prevRight > outerRight) {
-            RenderUtil.drawRect(outerRight, bandTop, prevRight, bandBottom, color);
+            RenderUtil.drawRect(outerRight - thickness, bandTop, prevRight, bandBottom, color);
         }
     }
     private long renderArrayList(long now) {
@@ -325,6 +372,10 @@ public class HUD extends Module {
         float lastBoxTop = 0.0F;
         float lastBoxBottom = 0.0F;
         int lastColor = 0;
+        float sidebarBottom = -Float.MAX_VALUE;
+        float sidebarBottomLeft = 0.0F;
+        float sidebarBottomRight = 0.0F;
+        int sidebarBottomColor = 0;
         for (Entry entry : this.activeEntries) {
             if (entry.animationTime == 0.0F) {
                 continue;
@@ -355,7 +406,19 @@ public class HUD extends Module {
             lastBoxTop = boxTop;
             lastBoxBottom = boxBottom;
             lastColor = color;
+            if (boxBottom >= sidebarBottom) {
+                sidebarBottom = boxBottom;
+                sidebarBottomLeft = boxLeft - thickness;
+                sidebarBottomRight = boxRight;
+                sidebarBottomColor = color;
+            }
             index++;
+        }
+        if (!firstRow && this.arraylistOutline.getValue() == OUTLINE_SIDEBAR) {
+            RenderUtil.enableRenderState();
+            RenderUtil.drawRect(sidebarBottomLeft, sidebarBottom, sidebarBottomRight,
+                    sidebarBottom + thickness, sidebarBottomColor);
+            RenderUtil.disableRenderState();
         }
         if (!firstRow && this.arraylistOutline.getValue() == OUTLINE_FULL) {
             float capTop = this.posY.getValue() == 0 ? lastBoxBottom : lastBoxTop - thickness;

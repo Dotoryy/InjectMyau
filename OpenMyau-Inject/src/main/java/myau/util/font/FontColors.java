@@ -26,10 +26,7 @@ final class FontColors {
         if (alpha == 0) {
             alpha = 0xFF;
         }
-        int red = ((color >>> 16) & 0xFF) / 4;
-        int green = ((color >>> 8) & 0xFF) / 4;
-        int blue = (color & 0xFF) / 4;
-        return (alpha << 24) | (red << 16) | (green << 8) | blue;
+        return (alpha << 24) | 0x3F3F3F;
     }
     static int withAlpha(int color, int alpha) {
         return (alpha << 24) | (color & 0xFFFFFF);

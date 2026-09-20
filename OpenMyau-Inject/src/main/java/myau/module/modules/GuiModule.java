@@ -2,6 +2,7 @@ package myau.module.modules;
 
 import myau.module.Module;
 import myau.ui.clickgui.ClickGui;
+import myau.util.ChatUtil;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.input.Keyboard;
 
@@ -17,8 +18,13 @@ public class GuiModule extends Module {
     @Override
     public void onEnabled() {
         setEnabled(false);
-        if(clickGui == null){
-            clickGui = new ClickGui();
+        try {
+            if (clickGui == null) {
+                clickGui = new ClickGui();
+            }
+        } catch (Throwable failed) {
+            ChatUtil.sendFormatted("&cclick gui failed to open: " + failed.getMessage());
+            return;
         }
         mc.displayGuiScreen(clickGui);
     }

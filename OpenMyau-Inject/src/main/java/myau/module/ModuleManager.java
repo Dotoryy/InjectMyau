@@ -22,7 +22,9 @@ public class ModuleManager {
         return this.modules
                 .values()
                 .stream()
-                .filter(module -> squash(module.getName()).equalsIgnoreCase(wanted))
+                .filter(module -> squash(module.getName()).equalsIgnoreCase(wanted)
+                        || java.util.Arrays.stream(module.getLegacyNames())
+                        .anyMatch(legacy -> squash(legacy).equalsIgnoreCase(wanted)))
                 .findFirst()
                 .orElse(null);
     }

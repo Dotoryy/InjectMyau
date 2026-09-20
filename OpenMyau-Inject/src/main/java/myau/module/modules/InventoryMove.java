@@ -62,8 +62,10 @@ public class InventoryMove extends Module {
     private static final int WATCHDOG_3_STOP_TICKS = 10;
 
     public final ModeProperty mode = new ModeProperty("mode", MODE_NORMAL,
-            new String[]{"Normal", "Buffer Abuse", "Cancel", "Grim", "Grim 2", "Watchdog",
-                    "Watchdog 3"});
+            new String[]{"Normal", "Buffer Abuse", "Cancel", "Grim", "Grim 2",
+                    "Watchdog Blinkless", "Watchdog Legit"})
+            .withAlias("Watchdog", MODE_WATCHDOG)
+            .withAlias("Watchdog 3", MODE_WATCHDOG_3);
 
     public final IntProperty clicks = new IntProperty("clicks", 3, 2, 10,
             () -> this.mode.getValue() == MODE_BUFFER_ABUSE);
@@ -114,8 +116,13 @@ public class InventoryMove extends Module {
 
     private final Map<Entity, Boolean> everMoved = new WeakHashMap<>();
 
+    @Override
+    public String[] getLegacyNames() {
+        return new String[]{"Inventory Move"};
+    }
+
     public InventoryMove() {
-        super("Inventory Move", false);
+        super("Inv Move", false);
     }
 
     @Override
@@ -647,9 +654,10 @@ public class InventoryMove extends Module {
         if (this.chestOpenTick == -1) {
             this.chestOpenTick = mc.thePlayer.ticksExisted;
         }
-        if (!chestOpenConfirmed && this.openLatencyTicks >= 0
+        int latency = this.openLatencyTicks >= 0 ? this.openLatencyTicks : 0;
+        if (!chestOpenConfirmed
                 && mc.thePlayer.ticksExisted - this.chestOpenTick
-                >= this.openLatencyTicks - this.ticks.getValue()) {
+                >= latency - this.ticks.getValue()) {
             chestOpenConfirmed = true;
         }
     }

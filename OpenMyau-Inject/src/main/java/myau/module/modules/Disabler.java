@@ -1,5 +1,6 @@
 package myau.module.modules;
 
+import myau.access.AccessorC03PacketPlayer;
 import myau.access.AccessorC0DPacketCloseWindow;
 import myau.event.EventTarget;
 import myau.event.types.EventType;
@@ -18,10 +19,14 @@ import myau.property.properties.ModeProperty;
 import myau.property.properties.TextProperty;
 import myau.util.PacketUtil;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.network.EnumConnectionState;
 import net.minecraft.network.Packet;
+import net.minecraft.network.handshake.client.C00Handshake;
 import net.minecraft.network.PacketBuffer;
 import net.minecraft.network.play.client.C00PacketKeepAlive;
 import net.minecraft.network.play.client.C03PacketPlayer;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.client.C0DPacketCloseWindow;
 import net.minecraft.network.play.client.C0EPacketClickWindow;
 import net.minecraft.network.play.client.C0FPacketConfirmTransaction;
@@ -33,6 +38,8 @@ public class Disabler extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
 
     private static final int MODE_WATCHDOG = 0;
+
+    private static final String SPOOFED_ADDRESS = "1iro.cc/spoofing";
 
     private static final long TIMER_SPIKE_INTERVAL_MS = 700L;
 
@@ -67,6 +74,23 @@ public class Disabler extends Module {
     public final BooleanProperty watchdogInv = new BooleanProperty("Watchdog Inv", false,
             () -> this.mode.getValue() == MODE_WATCHDOG);
 
+    public final BooleanProperty spoofIp = new BooleanProperty("Spoof IP", false,
+            () -> this.mode.getValue() == MODE_WATCHDOG);
+
+    public final BooleanProperty duplicateRotPlace = new BooleanProperty("Duplicate Rot Place", false);
+
+    private static final float DUPLICATE_ROT_MIN_DELTA = 2.0F;
+    private static final float DUPLICATE_ROT_EPSILON = 0.0001F;
+    private static final float DUPLICATE_ROT_NUDGE = 0.0002F;
+    private float duplicateLastYaw = Float.NaN;
+    private float duplicateDeltaYaw = 0.0F;
+    private float duplicateLastPlacedDeltaYaw = 0.0F;
+    private boolean duplicateRotated = false;
+
+    private volatile ServerData originalServerData = null;
+
+    private volatile ServerData spoofedServerData = null;
+
     private final CopyOnWriteArrayList<Packet<?>> timerHeldPackets = new CopyOnWriteArrayList<Packet<?>>();
 
     private volatile long timerHoldStartMs = System.currentTimeMillis();
@@ -88,6 +112,7 @@ public class Disabler extends Module {
 
     @Override
     public void onDisabled() {
+        this.restoreServerAddress();
         this.flushTimerPackets();
         this.invShouldBlink = false;
         this.invBlockHolder.release();
@@ -95,6 +120,33 @@ public class Disabler extends Module {
 
     private boolean isWatchdogActive() {
         return this.isEnabled() && this.mode.getValue() == MODE_WATCHDOG;
+    }
+
+    private void updateServerAddressSpoof() {
+        if (!this.isWatchdogActive() || !this.spoofIp.getValue()) {
+            this.restoreServerAddress();
+            return;
+        }
+        ServerData current = mc.getCurrentServerData();
+        if (current == null || current == this.spoofedServerData) {
+            return;
+        }
+        ServerData copy = new ServerData(current.serverName, SPOOFED_ADDRESS, current.isOnLAN());
+        copy.copyFrom(current);
+        copy.serverIP = SPOOFED_ADDRESS;
+        this.originalServerData = current;
+        this.spoofedServerData = copy;
+        mc.setServerData(copy);
+    }
+
+    private void restoreServerAddress() {
+        ServerData spoofed = this.spoofedServerData;
+        ServerData original = this.originalServerData;
+        this.spoofedServerData = null;
+        this.originalServerData = null;
+        if (spoofed != null && original != null && mc.getCurrentServerData() == spoofed) {
+            mc.setServerData(original);
+        }
     }
 
     @EventTarget
@@ -114,6 +166,7 @@ public class Disabler extends Module {
         if (event.getType() != EventType.PRE) {
             return;
         }
+        this.updateServerAddressSpoof();
         if (!this.isWatchdogActive() || !this.watchdogInv.getValue()) {
             this.invShouldBlink = false;
             this.invBlockHolder.release();
@@ -131,14 +184,54 @@ public class Disabler extends Module {
 
     @EventTarget
     public void onLoadWorld(LoadWorldEvent event) {
+        this.updateServerAddressSpoof();
         this.timerHeldPackets.clear();
         this.timerHoldStartMs = System.currentTimeMillis();
         this.invShouldBlink = false;
     }
 
+    @EventTarget(Priority.LOW)
+    public void onDuplicateRotPlace(PacketEvent event) {
+        if (event.getType() != EventType.SEND || event.isCancelled()
+                || !this.isEnabled() || !this.duplicateRotPlace.getValue()) {
+            return;
+        }
+        Packet<?> packet = event.getPacket();
+        if (packet instanceof C03PacketPlayer) {
+            C03PacketPlayer movement = (C03PacketPlayer) packet;
+            if (!movement.getRotating()) {
+                return;
+            }
+            float yaw = movement.getYaw();
+            float previous = this.duplicateLastYaw;
+            this.duplicateLastYaw = yaw;
+            if (Float.isNaN(previous)) {
+                return;
+            }
+            this.duplicateDeltaYaw = Math.abs(yaw - previous);
+            this.duplicateRotated = true;
+            if (this.duplicateDeltaYaw > DUPLICATE_ROT_MIN_DELTA
+                    && Math.abs(this.duplicateDeltaYaw - this.duplicateLastPlacedDeltaYaw)
+                            < DUPLICATE_ROT_EPSILON) {
+                float nudged = yaw + DUPLICATE_ROT_NUDGE;
+                AccessorC03PacketPlayer.setYaw(movement, nudged);
+                this.duplicateLastYaw = nudged;
+                this.duplicateDeltaYaw = Math.abs(nudged - previous);
+            }
+        } else if (packet instanceof C08PacketPlayerBlockPlacement && this.duplicateRotated) {
+            this.duplicateLastPlacedDeltaYaw = this.duplicateDeltaYaw;
+            this.duplicateRotated = false;
+        }
+    }
+
     @EventTarget(Priority.HIGHEST)
     public void onPacketSend(PacketEvent event) {
         if (event.getType() != EventType.SEND) {
+            return;
+        }
+        if (event.getPacket() instanceof C00Handshake
+                && ((C00Handshake) event.getPacket()).getRequestedState() == EnumConnectionState.LOGIN) {
+            this.updateServerAddressSpoof();
             return;
         }
         if (!this.isWatchdogActive() || mc.thePlayer == null) {

@@ -9,6 +9,7 @@ import myau.events.LivingUpdateEvent;
 import myau.events.SprintEvent;
 import myau.events.MoveInputEvent;
 import myau.events.PlayerUpdateEvent;
+import myau.events.PreSlowDownEvent;
 import myau.events.UpdateEvent;
 import myau.management.LateRotation;
 import myau.management.RotationState;
@@ -145,13 +146,19 @@ public final class LocalPlayerCallbacks {
             Log.swallowed(swallowed);
         }
     }
+    private static int slowDownTick = Integer.MIN_VALUE;
+    private static boolean slowDownCancelled = false;
+
     public static boolean isUsingItem(EntityPlayerSP player) {
         try {
-            if (Myau.moduleManager != null) {
-                NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
-                if (noSlow.isEnabled() && noSlow.isAnyActive()) {
-                    return false;
-                }
+            if (Myau.moduleManager != null && player.ticksExisted != slowDownTick) {
+                slowDownTick = player.ticksExisted;
+                PreSlowDownEvent event = new PreSlowDownEvent();
+                EventManager.call(event);
+                slowDownCancelled = event.isCancelled();
+            }
+            if (slowDownCancelled) {
+                return false;
             }
         } catch (Throwable swallowed) {
             Log.swallowed(swallowed);

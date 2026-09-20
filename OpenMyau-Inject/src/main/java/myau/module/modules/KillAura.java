@@ -9,6 +9,7 @@ import myau.event.types.EventType;
 import myau.event.types.Priority;
 import myau.events.*;
 import myau.access.AccessorPlayerControllerMP;
+import myau.management.SlotComponent;
 import myau.module.Module;
 import myau.property.properties.*;
 import myau.util.*;
@@ -281,6 +282,7 @@ public class KillAura extends Module {
         return BLOCK_DELAY_PASSTHROUGH;
     }
     private int lastAttackTick = -1;
+    private boolean digAborted = false;
     private boolean performAttack(float yaw, float pitch) {
         if (mc.thePlayer != null && this.lastAttackTick == mc.thePlayer.ticksExisted) {
             return false;
@@ -345,7 +347,7 @@ public class KillAura extends Module {
         this.blockingState = true;
     }
     private boolean watchdogCycle() {
-        if (AccessorPlayerControllerMP.getIsHittingBlock(mc.playerController)
+        if (AccessorPlayerControllerMP.getCurBlockDamageMP(mc.playerController) != 0.0F
                 && mc.objectMouseOver != null
                 && mc.objectMouseOver.typeOfHit == MovingObjectType.BLOCK) {
             this.watchdogStage = 0;
@@ -361,13 +363,17 @@ public class KillAura extends Module {
                 this.watchdogShort = this.watchdogShortCycle.getValue();
                 if (this.watchdogShort) {
                     sendBlock = this.watchdogBlock();
-                } else if (!this.watchdogBlockSlowdown.getValue()) {
+                } else if (ServerUtil.isWatchdogServer() && Math.random() > 0.5
+                        && !this.watchdogBlockSlowdown.getValue()) {
                     this.watchdogFlickSlot();
                     this.stopBlock();
                 }
                 this.watchdogBlinkAfterBlock = true;
                 break;
             case 2:
+                if (!ServerUtil.isWatchdogServer() && this.isPlayerBlocking()) {
+                    this.stopBlock();
+                }
                 if (this.watchdogShort) {
                     this.watchdogTearDown();
                 } else {
@@ -397,13 +403,13 @@ public class KillAura extends Module {
         this.fakeBlockState = true;
     }
     private void watchdogFlickSlot() {
-        int current = AccessorPlayerControllerMP.getCurrentPlayerItem(mc.playerController);
+        int current = SlotComponent.getRealSlot();
         int other = ThreadLocalRandom.current().nextInt(9);
         while (other == current) {
             other = ThreadLocalRandom.current().nextInt(9);
         }
-        PacketUtil.sendPacket(new C09PacketHeldItemChange(other));
-        PacketUtil.sendPacket(new C09PacketHeldItemChange(current));
+        SlotComponent.setSlot(other);
+        SlotComponent.setSlot(current);
     }
 
     private void stopBlock() {
@@ -466,7 +472,7 @@ public class KillAura extends Module {
         } else if (!(Boolean) this.weaponsOnly.getValue()
                 || ItemUtil.hasRawUnbreakingEnchant()
                 || this.allowTools.getValue() && ItemUtil.isHoldingTool()) {
-            if (AccessorPlayerControllerMP.getIsHittingBlock(mc.playerController)) {
+            if (this.allowMining.getValue() && AccessorPlayerControllerMP.getIsHittingBlock(mc.playerController)) {
                 return false;
             } else if ((ItemUtil.isEating() || ItemUtil.isUsingBow()) && PlayerUtil.isUsingItem()) {
                 return false;
@@ -705,6 +711,10 @@ public class KillAura extends Module {
         if (this.isEnabled() && event.getType() == EventType.PRE) {
             if (this.attackDelayMS > 0L) {
                 this.attackDelayMS -= 50L;
+            }
+            if (this.digAborted) {
+                this.digAborted = false;
+                this.lastAttackTick = mc.thePlayer.ticksExisted;
             }
             boolean attack = this.target != null && this.canAttack();
             boolean block = attack && this.canAutoBlock();
@@ -1214,14 +1224,21 @@ public class KillAura extends Module {
     }
     @EventTarget
     public void onHitBlock(HitBlockEvent event) {
-        if (!ItemUtil.isHoldingSword()) {
+        boolean sword = ItemUtil.isHoldingSword();
+        if (sword && this.isBlocking) {
+            event.setCancelled(true);
             return;
         }
-        if (this.isBlocking) {
-            event.setCancelled(true);
-        } else if (this.isEnabled() && this.target != null && this.canAttack()) {
-            event.setCancelled(true);
+        if (!this.isEnabled() || this.target == null || mc.playerController == null || !this.canAttack()) {
+            return;
         }
+        if (!sword && this.allowMining.getValue()) {
+            return;
+        }
+        if (AccessorPlayerControllerMP.getIsHittingBlock(mc.playerController)) {
+            this.digAborted = true;
+        }
+        event.setCancelled(true);
     }
     @EventTarget
     public void onCancelUse(CancelUseEvent event) {
@@ -1239,6 +1256,7 @@ public class KillAura extends Module {
         this.watchdogStage = 0;
         this.watchdogShort = this.watchdogShortCycle.getValue();
         this.ticksSinceVelocity = VELOCITY_TICKS_CAP;
+        this.digAborted = false;
         RiseRotation.reset();
     }
     @Override

@@ -28,6 +28,10 @@ public abstract class Module {
         return this.name;
     }
 
+    public String[] getLegacyNames() {
+        return new String[0];
+    }
+
     public String formatModule() {
         return String.format(
                 "%s%s &r(%s&r)",

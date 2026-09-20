@@ -14,6 +14,8 @@ public final class Hooks {
     private static final String GUI_INGAME_FORGE = "net.minecraftforge.client.GuiIngameForge";
     private static final String ENTITY_RENDERER = "net.minecraft.client.renderer.EntityRenderer";
     private static final String NETWORK_MANAGER = "net.minecraft.network.NetworkManager";
+    private static final String NET_HANDLER_PLAY_CLIENT =
+            "net.minecraft.client.network.NetHandlerPlayClient";
     private static final String BLOCK = "net.minecraft.block.Block";
     private static final String VIS_GRAPH = "net.minecraft.client.renderer.chunk.VisGraph";
     private static final String WORLD = "net.minecraft.world.World";
@@ -107,6 +109,13 @@ public final class Hooks {
         HookRegistry.hook(ENTITY_RENDERER, "renderWorldPass", "(IFJ)V")
                 .at(Position.BEFORE_FIELD).calls("render3DPost")
                 .field(ENTITY_RENDERER, "renderHand", "Z").add();
+
+        HookRegistry.hook(NET_HANDLER_PLAY_CLIENT, "handlePlayerPosLook",
+                        "(Lnet/minecraft/network/play/server/S08PacketPlayerPosLook;)V")
+                .at(Position.REPLACE_INVOKE)
+                .invoking(PLAYER, "setPositionAndRotation", "(DDDFF)V").membersOf(ENTITY)
+                .calls("teleportRotation",
+                        "(Lnet/minecraft/entity/player/EntityPlayer;DDDFF)V").add();
 
         HookRegistry.hook(NETWORK_MANAGER, "channelRead0",
                         "(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/Packet;)V")

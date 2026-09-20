@@ -23,7 +23,7 @@ public class KeepSprint extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     private static final int MODE_STANDARD = 0;
     private static final int MODE_PREDICTION = 1;
-    private static final int MODE_PREDICTION_2 = 2;
+    private static final int MODE_WATCHDOG = 2;
     private static final int KNOCKBACK_GUARD_TICKS = 8;
 
     private static final int STAGE_IDLE = 0;
@@ -34,7 +34,7 @@ public class KeepSprint extends Module {
     private static final int SLOWDOWN_SPRINT_DROP = 60;
 
     public final ModeProperty mode = new ModeProperty("mode", MODE_STANDARD,
-            new String[]{"STANDARD", "PREDICTION", "PREDICTION 2"});
+            new String[]{"STANDARD", "PREDICTION", "WATCHDOG"}).withAlias("PREDICTION 2", MODE_WATCHDOG);
     public final PercentProperty slowdown = new PercentProperty("slowdown", 0,
             () -> this.mode.getValue() != MODE_PREDICTION);
     public final BooleanProperty groundOnly = new BooleanProperty("ground-only", false,
@@ -58,8 +58,8 @@ public class KeepSprint extends Module {
         switch (this.mode.getValue()) {
             case MODE_PREDICTION:
                 return new String[]{"Prediction"};
-            case MODE_PREDICTION_2:
-                return new String[]{"Prediction 2"};
+            case MODE_WATCHDOG:
+                return new String[]{"Watchdog"};
             default:
                 return new String[]{"Standard"};
         }
@@ -81,7 +81,7 @@ public class KeepSprint extends Module {
     }
 
     public boolean shouldKeepSprint() {
-        if (this.mode.getValue() == MODE_PREDICTION_2) {
+        if (this.mode.getValue() == MODE_WATCHDOG) {
             return this.stage == STAGE_RESTORE;
         }
         if (this.mode.getValue() != MODE_STANDARD) {
@@ -99,7 +99,7 @@ public class KeepSprint extends Module {
     }
 
     public boolean shouldDropSprintAfterHit() {
-        return this.mode.getValue() == MODE_PREDICTION_2
+        return this.mode.getValue() == MODE_WATCHDOG
                 && this.shouldKeepSprint()
                 && this.slowdown.getValue() == SLOWDOWN_SPRINT_DROP;
     }
@@ -108,8 +108,8 @@ public class KeepSprint extends Module {
         if (!this.isEnabled() || mc.thePlayer == null) {
             return false;
         }
-        if (this.mode.getValue() == MODE_PREDICTION_2) {
-            return this.ruleOnAttack(target);
+        if (this.mode.getValue() == MODE_WATCHDOG) {
+            return !attackReduceActive() && this.ruleOnAttack(target);
         }
         if (this.mode.getValue() != MODE_PREDICTION) {
             return false;
@@ -162,7 +162,7 @@ public class KeepSprint extends Module {
     }
 
     public void confirmAttack() {
-        if (!this.isEnabled() || this.mode.getValue() != MODE_PREDICTION_2
+        if (!this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG
                 || !this.releasePending) {
             return;
         }
@@ -204,8 +204,15 @@ public class KeepSprint extends Module {
         if (event.getType() != EventType.PRE) {
             return;
         }
-        if (!this.isEnabled() || this.mode.getValue() != MODE_PREDICTION_2 || mc.thePlayer == null) {
+        if (!this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG || mc.thePlayer == null) {
             this.resetStage();
+            return;
+        }
+        if (attackReduceActive()) {
+            this.resetStage();
+            if (!mc.thePlayer.isSprinting() && canSprintNow()) {
+                mc.thePlayer.setSprinting(true);
+            }
             return;
         }
         if (this.stageTicks > STAGE_TIMEOUT_TICKS) {
@@ -228,10 +235,13 @@ public class KeepSprint extends Module {
 
     @EventTarget(Priority.LOWEST)
     public void onAttack(AttackEvent event) {
-        if (!this.isEnabled() || this.mode.getValue() != MODE_PREDICTION_2 || mc.thePlayer == null) {
+        if (!this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG || mc.thePlayer == null) {
             return;
         }
         if (!event.isFromController()) {
+            return;
+        }
+        if (attackReduceActive()) {
             return;
         }
         if (this.ruleOnAttack(event.getTarget())) {
@@ -244,8 +254,14 @@ public class KeepSprint extends Module {
         if (!this.isEnabled() || mc.thePlayer == null) {
             return;
         }
-        if (this.mode.getValue() == MODE_PREDICTION_2) {
-            this.applyStage();
+        if (this.mode.getValue() == MODE_WATCHDOG) {
+            if (attackReduceActive()) {
+                if (!mc.thePlayer.isSprinting() && canSprintNow()) {
+                    mc.thePlayer.setSprinting(true);
+                }
+            } else {
+                this.applyStage();
+            }
             return;
         }
         if (this.mode.getValue() != MODE_PREDICTION) {
@@ -273,6 +289,11 @@ public class KeepSprint extends Module {
             this.sprintCancelled = false;
         }
     }
+    private static boolean attackReduceActive() {
+        Velocity velocity = (Velocity) Myau.moduleManager.modules.get(Velocity.class);
+        return velocity != null && velocity.isAttackReduceActive();
+    }
+
     private static boolean hasTarget() {
         KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
         return killAura != null && killAura.isEnabled() && killAura.getTarget() != null;

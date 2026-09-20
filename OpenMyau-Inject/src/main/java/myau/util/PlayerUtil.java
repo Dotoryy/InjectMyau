@@ -2,6 +2,7 @@ package myau.util;
 
 import myau.Myau;
 import myau.module.modules.KeepSprint;
+import myau.module.modules.Velocity;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockAir;
 import net.minecraft.client.Minecraft;
@@ -178,7 +179,9 @@ public class PlayerUtil {
                                     MathHelper.cos(mc.thePlayer.rotationYaw * (float) Math.PI / 180.0F) * (float) knockbackLevel * 0.5F
                             );
                             KeepSprint keepSprint = (KeepSprint) Myau.moduleManager.modules.get(KeepSprint.class);
-                            if (keepSprint.isEnabled() && keepSprint.shouldKeepSprint()) {
+                            Velocity velocity = (Velocity) Myau.moduleManager.modules.get(Velocity.class);
+                            boolean attackReduce = velocity != null && velocity.isAttackReduceReducing();
+                            if (!attackReduce && keepSprint.isEnabled() && keepSprint.shouldKeepSprint()) {
                                 mc.thePlayer.motionX *= 0.6 + 0.4 * (1.0 - keepSprint.slowdown.getValue().doubleValue() / 100.0);
                                 mc.thePlayer.motionZ *= 0.6 + 0.4 * (1.0 - keepSprint.slowdown.getValue().doubleValue() / 100.0);
                                 if (keepSprint.shouldDropSprintAfterHit()) {

@@ -191,6 +191,19 @@ public final class HookRegistry {
         return list == null ? new ArrayList<Hook>() : list;
     }
 
+    public static String keyOf(Hook hook) {
+        return hook.owner + "." + hook.method + " @" + hook.position
+                + " -> " + hook.callbackName;
+    }
+
+    public static List<Hook> allHooks() {
+        List<Hook> all = new ArrayList<Hook>();
+        for (List<Hook> list : BY_OWNER.values()) {
+            all.addAll(list);
+        }
+        return all;
+    }
+
     public static int size() {
         int total = 0;
         for (List<Hook> list : BY_OWNER.values()) {

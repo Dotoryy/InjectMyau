@@ -59,7 +59,7 @@ public final class GlyphFontRenderer implements RavenFontRenderer {
         }
         int width = 0;
         if (shadow) {
-            width = this.drawInternal(text, x + 0.5F, y + 0.5F, color, true);
+            width = this.drawInternal(text, x + 1.0F, y + 1.0F, color, true);
         }
         return Math.max(width, this.drawInternal(text, x, y, color, false));
     }

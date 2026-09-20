@@ -80,16 +80,17 @@ public class Backtrack extends Module {
     private String lastDebugLine = null;
 
     public Backtrack() {
-        super("Backtrack", false);
+        super("Back Track", false);
+    }
+
+    @Override
+    public String[] getLegacyNames() {
+        return new String[]{"Backtrack"};
     }
 
     @Override
     public String[] getSuffix() {
-        return new String[]{
-                this.currentDelay > 0 && !this.isPacketQueueEmpty()
-                        ? this.currentDelay + "ms"
-                        : (int) this.maxDelay.getValue().floatValue() + "ms"
-        };
+        return new String[0];
     }
 
     @Override

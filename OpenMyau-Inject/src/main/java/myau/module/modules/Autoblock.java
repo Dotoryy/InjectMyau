@@ -70,6 +70,7 @@ public class Autoblock extends Module {
     public final BooleanProperty onlyWhenDamaged = new BooleanProperty("damaged", false);
     public final BooleanProperty ignoreTeammates = new BooleanProperty("ignore-teammates", true);
 
+    private boolean forcingAnimation = false;
     private boolean isBlocking = false;
     private boolean manualBlock = false;
     private boolean targetWasInRange = false;
@@ -83,6 +84,7 @@ public class Autoblock extends Module {
     private int lagStartTick = -1;
     private LagRequest outboundLag = null;
     private int tickCounter = 0;
+    private boolean swungThisEngagement = false;
 
     public Autoblock() {
         super("Auto Block", false);
@@ -90,7 +92,7 @@ public class Autoblock extends Module {
 
     @Override
     public String[] getSuffix() {
-        return new String[]{this.mode.getModeString()};
+        return new String[0];
     }
 
     @Override
@@ -228,7 +230,12 @@ public class Autoblock extends Module {
                 && mc.theWorld != null && mc.currentScreen == null && ItemUtil.isHoldingSword()
                 && requiredMouseButtonsDown
                 && (continuousUndamagedBlock || this.isBlocking || this.isLagging);
+        this.forcingAnimation = shouldAnimate;
         ReflectionUtils.setItemInUse(shouldAnimate);
+    }
+
+    public boolean isForcingBlockAnimation() {
+        return this.isEnabled() && this.forcingAnimation;
     }
 
 
@@ -273,6 +280,9 @@ public class Autoblock extends Module {
         boolean rmbDown = Mouse.isButtonDown(RIGHT_MOUSE);
         boolean lmbDown = Mouse.isButtonDown(LEFT_MOUSE) || killAuraAttacking;
         boolean hasTarget = this.currentTarget != null;
+        if (!hasTarget) {
+            this.swungThisEngagement = false;
+        }
         boolean conditionsMet = hasTarget && this.checkConditions(lmbDown, rmbDown);
         boolean leftTargetRange = this.targetWasInRange && !hasTarget;
         this.targetWasInRange = hasTarget;
@@ -338,7 +348,7 @@ public class Autoblock extends Module {
             this.stopBlocking(true);
             return;
         }
-        if (!this.isBlocking && !this.isLagging && this.shouldPredictiveBlock()) {
+        if (!this.isBlocking && !this.isLagging && this.shouldPredictiveBlock() && this.hasSwungFirst()) {
             this.startBlocking(currentTick);
         }
         if (!this.isBlocking) {
@@ -360,6 +370,10 @@ public class Autoblock extends Module {
             return false;
         }
         return !this.requireRmb.getValue() || rmbDown;
+    }
+
+    private boolean hasSwungFirst() {
+        return this.onlyWhenDamaged.getValue() || this.swungThisEngagement;
     }
 
     private boolean shouldPredictiveBlock() {
@@ -460,6 +474,10 @@ public class Autoblock extends Module {
         if (!this.isEnabled() || event.getType() != EventType.SEND) {
             return;
         }
+        if (!event.isCancelled() && event.getPacket() instanceof C02PacketUseEntity
+                && ((C02PacketUseEntity) event.getPacket()).getAction() == C02PacketUseEntity.Action.ATTACK) {
+            this.swungThisEngagement = true;
+        }
         if (isBedBreaking()) {
             this.releaseLag();
             return;
@@ -507,6 +525,7 @@ public class Autoblock extends Module {
         this.unblockedAfterLeavingRange = false;
         this.allowingAlwaysInteraction = false;
         this.lastBlockEndTimeMs = 0L;
+        this.swungThisEngagement = false;
         this.currentTarget = null;
         this.lastSelfHurtTime = 0;
         this.syncBlockAnimation();

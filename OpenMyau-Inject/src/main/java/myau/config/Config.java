@@ -54,6 +54,12 @@ public class Config {
             JsonObject jsonObject = parsed.getAsJsonObject();
             for (Module module : Myau.moduleManager.modules.values()) {
                 JsonElement moduleObj = jsonObject.get(module.getName());
+                for (String legacyName : module.getLegacyNames()) {
+                    if (moduleObj != null) {
+                        break;
+                    }
+                    moduleObj = jsonObject.get(legacyName);
+                }
                 if (moduleObj != null && moduleObj.isJsonObject()) {
                     JsonObject object = moduleObj.getAsJsonObject();
 

@@ -13,6 +13,7 @@ import myau.property.properties.IntProperty;
 import myau.property.properties.ModeProperty;
 import myau.property.properties.PercentProperty;
 import myau.util.ChatUtil;
+import myau.util.ItemUtil;
 import myau.util.KeyBindUtil;
 import myau.util.MoveUtil;
 import myau.util.MovementTicks;
@@ -125,6 +126,10 @@ public class Velocity extends Module {
                 && this.mwAttackReduce.getValue() && this.mwAttackCount > 0;
     }
 
+    public boolean isAttackReduceReducing() {
+        return this.isAttackReduceActive() && this.mwServerSprint;
+    }
+
     private boolean mwInactive() {
         return !this.isEnabled() || this.mode.getValue() != MODE_WATCHDOG
                 || mc.thePlayer == null || mc.theWorld == null
@@ -173,7 +178,7 @@ public class Velocity extends Module {
         if (this.mwInactive() || mc.thePlayer.movementInput == null) {
             return;
         }
-        if (this.mwStrict) {
+        if (this.mwStrict && this.mwCanForceAttack()) {
             mc.thePlayer.movementInput.moveForward = 1.0F;
             mc.thePlayer.movementInput.moveStrafe = 0.0F;
         }
@@ -243,11 +248,19 @@ public class Velocity extends Module {
         }
     }
 
-    private void mwForceAttack() {
+    private boolean mwCanForceAttack() {
         KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
         if (killAura == null || !killAura.isEnabled()) {
+            return false;
+        }
+        return !mc.thePlayer.isUsingItem() || ItemUtil.isHoldingSword();
+    }
+
+    private void mwForceAttack() {
+        if (!this.mwCanForceAttack()) {
             return;
         }
+        KillAura killAura = (KillAura) Myau.moduleManager.modules.get(KillAura.class);
         NoSlow noSlow = (NoSlow) Myau.moduleManager.modules.get(NoSlow.class);
         if (noSlow != null && noSlow.isWatchdogReleaseTick()) {
             return;
@@ -361,7 +374,7 @@ public class Velocity extends Module {
                 && ((S12PacketEntityVelocity) packet).getEntityID() == mc.thePlayer.getEntityId()) {
             if (this.mwAttackReduce.getValue()) {
                 this.mwStrict = true;
-                this.mwAttackCount = 2;
+                this.mwAttackCount = 3;
             }
             return this.mwBeginDelay(event, packet);
         }
